@@ -1,6 +1,10 @@
 # -------------------------------
 # 1. KiCad 电路设计文件
 # -------------------------------
+# 额外忽略 KiCad 的特殊临时文件
+KiCad/#auto_saved_files#/
+KiCad/KiCad-backups/
+KiCad/~*.lck
 # 临时与备份文件
 *.000
 *.bak
