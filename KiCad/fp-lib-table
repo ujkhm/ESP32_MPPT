@@ -3,4 +3,6 @@
   (lib (name "MP1584")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/MP1584EN")(options "")(descr ""))
   (lib (name "DC-DC POWER L1")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/WE-PD")(options "")(descr ""))
   (lib (name "USB4105-GF-A")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/USB4105-GF-A")(options "")(descr ""))
+  (lib (name "RT9013-33GB")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/RT9013-33GB")(options "")(descr ""))
+  (lib (name "button")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/button")(options "")(descr ""))
 )
