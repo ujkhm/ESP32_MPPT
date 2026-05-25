@@ -893,6 +893,156 @@
 			)
 			(embedded_fonts no)
 		)
+		(symbol "Diode:SS14"
+			(pin_numbers
+				(hide yes)
+			)
+			(pin_names
+				(offset 1.016)
+				(hide yes)
+			)
+			(exclude_from_sim no)
+			(in_bom yes)
+			(on_board yes)
+			(property "Reference" "D"
+				(at 0 2.54 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Value" "SS14"
+				(at 0 -2.54 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+				)
+			)
+			(property "Footprint" "Diode_SMD:D_SMA"
+				(at 0 -4.445 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Datasheet" "https://www.vishay.com/docs/88746/ss12.pdf"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "Description" "40V 1A Schottky Diode, SMA"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_keywords" "diode Schottky"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(property "ki_fp_filters" "D*SMA*"
+				(at 0 0 0)
+				(effects
+					(font
+						(size 1.27 1.27)
+					)
+					(hide yes)
+				)
+			)
+			(symbol "SS14_0_1"
+				(polyline
+					(pts
+						(xy -1.905 0.635) (xy -1.905 1.27) (xy -1.27 1.27) (xy -1.27 -1.27) (xy -0.635 -1.27) (xy -0.635 -0.635)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 1.27) (xy 1.27 -1.27) (xy -1.27 0) (xy 1.27 1.27)
+					)
+					(stroke
+						(width 0.254)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+				(polyline
+					(pts
+						(xy 1.27 0) (xy -1.27 0)
+					)
+					(stroke
+						(width 0)
+						(type default)
+					)
+					(fill
+						(type none)
+					)
+				)
+			)
+			(symbol "SS14_1_1"
+				(pin passive line
+					(at -3.81 0 0)
+					(length 2.54)
+					(name "K"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "1"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+				(pin passive line
+					(at 3.81 0 180)
+					(length 2.54)
+					(name "A"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+					(number "2"
+						(effects
+							(font
+								(size 1.27 1.27)
+							)
+						)
+					)
+				)
+			)
+			(embedded_fonts no)
+		)
 		(symbol "Interface_USB:CH340C"
 			(exclude_from_sim no)
 			(in_bom yes)
@@ -1318,20 +1468,11 @@
 					(font
 						(size 1.27 1.27)
 					)
-					(hide yes)
-				)
-			)
-			(property "MF" "Monolithic Power"
-				(at 0 0 0)
-				(effects
-					(font
-						(size 1.27 1.27)
-					)
 					(justify bottom)
 					(hide yes)
 				)
 			)
-			(property "DESCRIPTION" ""
+			(property "MF" "Monolithic Power"
 				(at 0 0 0)
 				(effects
 					(font
@@ -3741,7 +3882,7 @@
 	)
 	(wire
 		(pts
-			(xy 39.37 168.91) (xy 46.99 168.91)
+			(xy 27.94 168.91) (xy 35.56 168.91)
 		)
 		(stroke
 			(width 0)
@@ -3788,6 +3929,26 @@
 			(type default)
 		)
 		(uuid "97c986c8-e68d-4ce4-bc55-6d431fd13275")
+	)
+	(wire
+		(pts
+			(xy 57.15 166.37) (xy 58.42 166.37)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "b5cb68b9-50f0-4e51-ae76-95c23908fca6")
+	)
+	(wire
+		(pts
+			(xy 48.26 166.37) (xy 49.53 166.37)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "bc62334c-ee18-483b-9965-af63244800db")
 	)
 	(wire
 		(pts
@@ -3961,7 +4122,7 @@
 	)
 	(symbol
 		(lib_id "power:VCC")
-		(at 46.99 168.91 0)
+		(at 35.56 168.91 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -3970,7 +4131,7 @@
 		(fields_autoplaced yes)
 		(uuid "010386da-a705-4b49-af13-e30883a43516")
 		(property "Reference" "#PWR013"
-			(at 46.99 172.72 0)
+			(at 35.56 172.72 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3979,7 +4140,7 @@
 			)
 		)
 		(property "Value" "VCC"
-			(at 46.99 163.83 0)
+			(at 35.56 163.83 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3987,7 +4148,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 46.99 168.91 0)
+			(at 35.56 168.91 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -3996,7 +4157,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 46.99 168.91 0)
+			(at 35.56 168.91 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4005,7 +4166,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"VCC\""
-			(at 46.99 168.91 0)
+			(at 35.56 168.91 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4020,6 +4181,74 @@
 			(project ""
 				(path "/8145d5a2-4aff-47fb-b6a2-0059c8017b6c"
 					(reference "#PWR013")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "Diode:SS14")
+		(at 53.34 166.37 180)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "019ba544-6a01-48db-b65a-c53118570ec5")
+		(property "Reference" "D2"
+			(at 53.6575 160.02 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Value" "SS14"
+			(at 53.6575 162.56 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" "Diode_SMD:D_SMA"
+			(at 53.34 161.925 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" "https://www.vishay.com/docs/88746/ss12.pdf"
+			(at 53.34 166.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "40V 1A Schottky Diode, SMA"
+			(at 53.34 166.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "2"
+			(uuid "d36986ec-d68e-43d7-9764-e75dfafadd0d")
+		)
+		(pin "1"
+			(uuid "78825d1a-7200-47c1-80ac-996b26cf46b5")
+		)
+		(instances
+			(project ""
+				(path "/8145d5a2-4aff-47fb-b6a2-0059c8017b6c"
+					(reference "D2")
 					(unit 1)
 				)
 			)
@@ -4824,7 +5053,7 @@
 	)
 	(symbol
 		(lib_id "power:GND")
-		(at 39.37 173.99 0)
+		(at 27.94 173.99 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -4833,7 +5062,7 @@
 		(fields_autoplaced yes)
 		(uuid "699d4a41-4b88-402e-8939-27d11c67737e")
 		(property "Reference" "#PWR04"
-			(at 39.37 180.34 0)
+			(at 27.94 180.34 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4842,7 +5071,7 @@
 			)
 		)
 		(property "Value" "GND"
-			(at 39.37 179.07 0)
+			(at 27.94 179.07 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4850,7 +5079,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 39.37 173.99 0)
+			(at 27.94 173.99 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4859,7 +5088,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 39.37 173.99 0)
+			(at 27.94 173.99 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4868,7 +5097,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
-			(at 39.37 173.99 0)
+			(at 27.94 173.99 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4960,7 +5189,7 @@
 	)
 	(symbol
 		(lib_id "Connector:Barrel_Jack_MountingPin")
-		(at 31.75 171.45 0)
+		(at 20.32 171.45 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -4969,15 +5198,15 @@
 		(fields_autoplaced yes)
 		(uuid "700f007e-ef90-4147-8eb8-c834d51f4373")
 		(property "Reference" "J1"
-			(at 31.75 162.56 0)
+			(at 20.32 162.56 0)
 			(effects
 				(font
 					(size 1.27 1.27)
 				)
 			)
 		)
-		(property "Value" "Barrel_Jack_MountingPin"
-			(at 31.75 165.1 0)
+		(property "Value" "DC-IN"
+			(at 20.32 165.1 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4985,7 +5214,7 @@
 			)
 		)
 		(property "Footprint" "Connector_BarrelJack:BarrelJack_Kycon_KLDX-0202-xC_Horizontal"
-			(at 33.02 172.466 0)
+			(at 21.59 172.466 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -4994,7 +5223,7 @@
 			)
 		)
 		(property "Datasheet" "~"
-			(at 33.02 172.466 0)
+			(at 21.59 172.466 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5003,7 +5232,7 @@
 			)
 		)
 		(property "Description" "DC Barrel Jack with a mounting pin"
-			(at 31.75 171.45 0)
+			(at 20.32 171.45 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5097,7 +5326,7 @@
 	)
 	(symbol
 		(lib_id "power:VCC")
-		(at 58.42 166.37 0)
+		(at 48.26 166.37 0)
 		(unit 1)
 		(exclude_from_sim no)
 		(in_bom yes)
@@ -5106,7 +5335,7 @@
 		(fields_autoplaced yes)
 		(uuid "8a37e00d-6e43-4100-bff8-2ffd5642136f")
 		(property "Reference" "#PWR014"
-			(at 58.42 170.18 0)
+			(at 48.26 170.18 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5115,7 +5344,7 @@
 			)
 		)
 		(property "Value" "VCC"
-			(at 58.42 161.29 0)
+			(at 48.26 161.29 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5123,7 +5352,7 @@
 			)
 		)
 		(property "Footprint" ""
-			(at 58.42 166.37 0)
+			(at 48.26 166.37 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5132,7 +5361,7 @@
 			)
 		)
 		(property "Datasheet" ""
-			(at 58.42 166.37 0)
+			(at 48.26 166.37 0)
 			(effects
 				(font
 					(size 1.27 1.27)
@@ -5141,7 +5370,7 @@
 			)
 		)
 		(property "Description" "Power symbol creates a global label with name \"VCC\""
-			(at 58.42 166.37 0)
+			(at 48.26 166.37 0)
 			(effects
 				(font
 					(size 1.27 1.27)
