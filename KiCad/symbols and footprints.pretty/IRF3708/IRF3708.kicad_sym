@@ -1,0 +1,123 @@
+(kicad_symbol_lib
+  (version 20211014)
+  (generator https://github.com/tangsangsimida/EasyKiConverter)
+  (symbol "IRF3708PBF-VB"
+    (in_bom yes)
+    (on_board yes)
+    (property
+      "Reference"
+      "Q"
+      (id 0)
+      (at 5.59 10.16 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) )
+    )
+    (property
+      "Value"
+      "IRF3708PBF-VB"
+      (id 1)
+      (at 5.59 -10.16 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) )
+    )
+    (property
+      "Footprint"
+      "IRF3708:TO-220-3_L10.0-W4.6-P2.54-L"
+      (id 2)
+      (at 5.59 -12.70 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) hide)
+    )
+    (property
+      "Manufacturer"
+      "VBsemi(微碧半导体)"
+      (id 4)
+      (at 5.59 -15.24 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) hide)
+    )
+    (property
+      "LCSC Part"
+      "C18212457"
+      (id 5)
+      (at 5.59 -17.78 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) hide)
+    )
+    (property
+      "ki_description"
+      "IRF3708PBF-VB"
+      (id 6)
+      (at 5.59 -20.32 0)
+      (effects (font (size 1.27 1.27) (thickness 0) ) hide)
+    )
+    (polyline
+      (pts (xy 10.16 0.51) (xy 9.40 -0.76) (xy 10.92 -0.76) (xy 10.16 0.51))
+      (stroke (width 0.254) (type default))
+      (fill (type background))
+    )
+    (polyline
+      (pts (xy 5.08 0.00) (xy 6.60 -0.51) (xy 6.60 0.51) (xy 5.08 0.00))
+      (stroke (width 0.254) (type default))
+      (fill (type background))
+    )
+    (polyline
+      (pts (xy 11.18 0.51) (xy 10.67 0.51) (xy 9.65 0.51) (xy 9.14 0.51))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 2.54 0.00) (xy 4.57 0.00))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 5.08 -2.29) (xy 5.08 -1.27))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 5.08 -0.51) (xy 5.08 0.51))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 5.08 2.29) (xy 5.08 1.27))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 4.57 2.29) (xy 4.57 -2.29))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 7.62 -1.78) (xy 5.08 -1.78))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 5.08 0.00) (xy 7.62 0.00) (xy 7.62 -2.54) (xy 10.16 -2.54) (xy 10.16 -0.76))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (polyline
+      (pts (xy 5.08 1.78) (xy 7.62 1.78) (xy 7.62 2.54) (xy 10.16 2.54) (xy 10.16 0.51))
+      (stroke (width 0.254) (type default))
+      (fill (type none))
+    )
+    (pin unspecified line
+      (at 7.62 -5.08 90)
+      (length 2.54)
+      (name "S" (effects (font (size 1.27 1.27) (thickness 0) )))
+      (number "3" (effects (font (size 1.27 1.27) (thickness 0) )))
+    )
+    (pin unspecified line
+      (at 0.00 0.00 0)
+      (length 2.54)
+      (name "G" (effects (font (size 1.27 1.27) (thickness 0) )))
+      (number "1" (effects (font (size 1.27 1.27) (thickness 0) )))
+    )
+    (pin unspecified line
+      (at 7.62 5.08 270)
+      (length 2.54)
+      (name "D" (effects (font (size 1.27 1.27) (thickness 0) )))
+      (number "2" (effects (font (size 1.27 1.27) (thickness 0) )))
+    )
+  )
+)

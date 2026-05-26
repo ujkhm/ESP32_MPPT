@@ -5,5 +5,7 @@
   (lib (name "USB4105-GF-A")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/USB4105-GF-A")(options "")(descr ""))
   (lib (name "RT9013-33GB")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/RT9013-33GB")(options "")(descr ""))
   (lib (name "button")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/button")(options "")(descr ""))
-  (lib (name "OLED")(type "KiCad")(uri "C:/Users/TEMP.DESKTOP-K7JNHJ8.000/AppData/Local/Temp/ESP32_DevEnv/ESP32_MPPT/KiCad/symbols and footprints.pretty/OLED")(options "")(descr ""))
+  (lib (name "OLED")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/OLED")(options "")(descr ""))
+  (lib (name "IRF3708")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/IRF3708")(options "")(descr ""))
+  (lib (name "MIC4420YM")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/MIC4420YM")(options "")(descr ""))
 )
