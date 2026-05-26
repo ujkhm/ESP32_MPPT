@@ -4544,6 +4544,12 @@
 		(uuid "993746fe-d309-4529-9e04-94ce0868cc43")
 	)
 	(junction
+		(at 170.18 33.02)
+		(diameter 0)
+		(color 0 0 0 0)
+		(uuid "9e52145f-2c97-4c41-9afd-dc20e0f7d023")
+	)
+	(junction
 		(at 95.25 167.64)
 		(diameter 0)
 		(color 0 0 0 0)
@@ -5109,6 +5115,16 @@
 	)
 	(wire
 		(pts
+			(xy 170.18 33.02) (xy 185.42 33.02)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "d5631e21-7d55-45b0-841b-96630c498b27")
+	)
+	(wire
+		(pts
 			(xy 101.6 170.18) (xy 101.6 182.88)
 		)
 		(stroke
@@ -5126,6 +5142,16 @@
 			(type default)
 		)
 		(uuid "e15615d3-00f3-455d-9dcb-4f4faabd5a90")
+	)
+	(wire
+		(pts
+			(xy 72.39 50.8) (xy 80.01 50.8)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "e284ba86-2b67-466c-827a-6c1a3bf2bb0c")
 	)
 	(wire
 		(pts
@@ -5196,6 +5222,16 @@
 			(type default)
 		)
 		(uuid "f623075e-822f-4ab3-b524-771020113848")
+	)
+	(wire
+		(pts
+			(xy 162.56 27.94) (xy 170.18 27.94)
+		)
+		(stroke
+			(width 0)
+			(type default)
+		)
+		(uuid "f6a5e3c1-d4d6-4e8b-a720-68ed4a3ac83a")
 	)
 	(wire
 		(pts
@@ -5316,6 +5352,26 @@
 			(justify left bottom)
 		)
 		(uuid "92072c59-20b5-403f-a965-8f3cf52e1d05")
+	)
+	(label "start"
+		(at 162.56 27.94 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "9a8b1045-c36f-4fb2-9494-c2e944dfb16e")
+	)
+	(label "start"
+		(at 74.93 50.8 0)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify left bottom)
+		)
+		(uuid "c15b5a27-3ef5-4ac1-bc93-9786fd860afa")
 	)
 	(label "D+"
 		(at 179.07 129.54 180)
@@ -10283,6 +10339,72 @@
 			(project "KiCad"
 				(path "/8145d5a2-4aff-47fb-b6a2-0059c8017b6c"
 					(reference "R3")
+					(unit 1)
+				)
+			)
+		)
+	)
+	(symbol
+		(lib_id "power:GND")
+		(at 170.18 33.02 0)
+		(unit 1)
+		(exclude_from_sim no)
+		(in_bom yes)
+		(on_board yes)
+		(dnp no)
+		(fields_autoplaced yes)
+		(uuid "e9ad4187-81ac-4b3a-b2a5-8c897c38ee9f")
+		(property "Reference" "#PWR036"
+			(at 170.18 39.37 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Value" "GND"
+			(at 170.18 38.1 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+			)
+		)
+		(property "Footprint" ""
+			(at 170.18 33.02 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Datasheet" ""
+			(at 170.18 33.02 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(property "Description" "Power symbol creates a global label with name \"GND\" , ground"
+			(at 170.18 33.02 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(hide yes)
+			)
+		)
+		(pin "1"
+			(uuid "b84a0d27-a019-4424-8759-e253d0a2c02e")
+		)
+		(instances
+			(project "KiCad"
+				(path "/8145d5a2-4aff-47fb-b6a2-0059c8017b6c"
+					(reference "#PWR036")
 					(unit 1)
 				)
 			)
