@@ -70,3 +70,7 @@ Thumbs.db
 *.tmp
 *.swp
 *.swo
+# 忽略微軟 Office 的所有暫存鎖定檔
+~$*
+~*
+.~$*
