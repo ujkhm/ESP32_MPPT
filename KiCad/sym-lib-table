@@ -8,4 +8,5 @@
   (lib (name "OLED")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/OLED/DM-OLED096-636.kicad_sym")(options "")(descr ""))
   (lib (name "IRF3708")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/IRF3708/IRF3708.kicad_sym")(options "")(descr ""))
   (lib (name "MIC4420YM")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/MIC4420YM/MIC4420YM.kicad_sym")(options "")(descr ""))
+  (lib (name "INA232AIDDFR")(type "KiCad")(uri "${KIPRJMOD}/symbols and footprints.pretty/INA232AIDDFR/INA232AIDDFR.kicad_sym")(options "")(descr ""))
 )
