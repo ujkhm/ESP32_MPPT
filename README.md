@@ -1,2 +1,14 @@
 # ESP32_MPPT
-ESP32 MPPT for micro-generator output measurement.
+
+這是一個由ESP32為核心的MPPT系統，包含完整的電路圖、PCB及MPPT完整算法
+文件架構:micro generator
+|
+|---[3D_print_Component(存放本專案所需之3D模型)](./3D_print_Component/)
+|
+|---[BOM(存放PCB所需元件列表)](./BOM/)
+|
+|---[KiCad(存放完整原理圖及PCB)](./KiCad/)
+|
+|---[VSCode(存放專案所需程式)](./VSCode/)
+
+以上列出之資料夾皆有更詳細的說明，點擊上述列表即可查看
