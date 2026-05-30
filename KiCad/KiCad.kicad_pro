@@ -130,7 +130,7 @@
           ""
         ],
         [
-          "unconnected_items|196730000|88750000|F.Cu|4|d28aed58-cfbe-4f46-acaa-a4df8272b612|3ae1d116-bdbf-4217-9efd-f4ae3bdd4585",
+          "unconnected_items|196730000|88750000|F.Cu|4|62e183d3-f693-4882-9822-254614f9e4b5|3ae1d116-bdbf-4217-9efd-f4ae3bdd4585",
           ""
         ]
       ],
@@ -568,7 +568,7 @@
       "gencad": "",
       "idf": "",
       "netlist": "",
-      "plot": "",
+      "plot": "Gerber/Gerber/",
       "pos_files": "",
       "specctra_dsn": "",
       "step": "",
