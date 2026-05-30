@@ -74,7 +74,7 @@
 			(mirror no)
 			(drillshape 0)
 			(scaleselection 1)
-			(outputdirectory "Gerber/Gerber/")
+			(outputdirectory "Gerber/")
 		)
 	)
 	(net 0 "")
@@ -14330,7 +14330,7 @@
 	)
 	(gr_rect
 		(start 160 60.75)
-		(end 165 65)
+		(end 165 66)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14342,7 +14342,7 @@
 	)
 	(gr_rect
 		(start 166.5 60.75)
-		(end 171.5 65)
+		(end 171.5 66)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14354,7 +14354,7 @@
 	)
 	(gr_rect
 		(start 160 60.75)
-		(end 165 65)
+		(end 165 66)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14365,7 +14365,7 @@
 	)
 	(gr_rect
 		(start 166.5 60.75)
-		(end 171.5 65)
+		(end 171.5 66)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14376,7 +14376,7 @@
 	)
 	(gr_rect
 		(start 243 60.75)
-		(end 247.5 63)
+		(end 247.5 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14388,7 +14388,7 @@
 	)
 	(gr_rect
 		(start 238 60.75)
-		(end 241 63)
+		(end 241 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14400,7 +14400,7 @@
 	)
 	(gr_rect
 		(start 233 60.75)
-		(end 236 63)
+		(end 236 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14412,7 +14412,7 @@
 	)
 	(gr_rect
 		(start 233 60.75)
-		(end 236 63)
+		(end 236 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14423,7 +14423,7 @@
 	)
 	(gr_rect
 		(start 238 60.75)
-		(end 241 63)
+		(end 241 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
@@ -14434,7 +14434,7 @@
 	)
 	(gr_rect
 		(start 243 60.75)
-		(end 247.5 63)
+		(end 247.5 65.25)
 		(stroke
 			(width 0.2)
 			(type solid)
