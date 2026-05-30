@@ -130,7 +130,7 @@
           ""
         ],
         [
-          "unconnected_items|196730000|88750000|F.Cu|4|d28aed58-cfbe-4f46-acaa-a4df8272b612|3ae1d116-bdbf-4217-9efd-f4ae3bdd4585",
+          "unconnected_items|196730000|88750000|F.Cu|4|62e183d3-f693-4882-9822-254614f9e4b5|c41a4501-2076-4503-a6e2-04ecb6bc714c",
           ""
         ]
       ],
@@ -579,7 +579,7 @@
   },
   "schematic": {
     "annotate_start_num": 0,
-    "bom_export_filename": "${PROJECTNAME}.csv",
+    "bom_export_filename": "..\\BOM\\KiCad.csv",
     "bom_fmt_presets": [],
     "bom_fmt_settings": {
       "field_delimiter": ",",
@@ -749,6 +749,18 @@
           "label": "#",
           "name": "${ITEM_NUMBER}",
           "show": false
+        },
+        {
+          "group_by": false,
+          "label": "LCSC Part",
+          "name": "LCSC Part",
+          "show": false
+        },
+        {
+          "group_by": false,
+          "label": "Manufacturer",
+          "name": "Manufacturer",
+          "show": false
         }
       ],
       "filter_string": "",
@@ -787,7 +799,7 @@
     },
     "net_format_name": "",
     "page_layout_descr_file": "",
-    "plot_directory": "",
+    "plot_directory": "C:/Users/LTY-PC/OneDrive/圖片/螢幕擷取畫面/",
     "space_save_all_events": true,
     "spice_current_sheet_as_root": false,
     "spice_external_command": "spice \"%I\"",
