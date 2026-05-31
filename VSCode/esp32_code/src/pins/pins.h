@@ -4,6 +4,9 @@
 #define SPEED_SENSOR_PIN 36
 #define MOTOR_PWM_PIN 26
 #define SERVO_PIN 23
-#define SDA2_PIN 33
-#define SCL2_PIN 25
-#define START_PIN 15
+#define BUCK_PWM_PIN 14
+#define SDA_PIN 21                  //OLED SDA
+#define SCL_PIN 22                  //OLED SCL
+#define SDA2_PIN 33                 //INA232 SDA
+#define SCL2_PIN 25                 //INA232 SCL
+#define START_PIN 15                
