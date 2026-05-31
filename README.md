@@ -1,6 +1,6 @@
 # ESP32_MPPT
 
-這是一個由ESP32為核心的MPPT系統，包含完整的電路圖、PCB及MPPT完整算法
+這是一個由ESP32為核心的MPPT系統，用於測量小型有刷直流馬達作為發電機時的功率曲線，包含完整的電路圖、PCB及MPPT完整算法
 文件架構:<br>
 micro generator<br>
 |<br>
