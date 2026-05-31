@@ -1,0 +1,12 @@
+# PlatformIO ESP32 uses Xtensa GCC flags that host clang/clangd does not
+# understand. Strip them so IntelliSense matches real builds (pio run).
+CompileFlags:
+  Remove:
+    - -fstrict-volatile-bitfields
+    - -mlongcalls
+    - -mtext-section-literals
+    - -fno-tree-switch-conversion
+    - -fno-jump-tables
+    - -freorder-blocks
+  Add:
+    - -Wno-unknown-warning-option
