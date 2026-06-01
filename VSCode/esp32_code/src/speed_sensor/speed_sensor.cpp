@@ -1,59 +1,67 @@
 #include "speed_sensor.h"
-#include "driver/pcnt.h"
-#include "esp32-hal.h"
-#include <cstdint>
+
 
 
 speed_sensor settings{};
+// 宣告全域指標，用來儲存這個計數器的控制代碼
+pcnt_unit_handle_t pcnt_unit = NULL;
+pcnt_channel_handle_t pcnt_chan = NULL;
 
 
-uint64_t wait_for_time;                              //時間旗標
-int16_t now_count_number;                            //現在計數器的值
-int16_t last_count_number = 0;                       //上一次的計數值
-uint64_t now_overflow_number;                        //現在的溢出值
-uint64_t last_overflow_number;                       //上一次的溢出值
+uint32_t wait_for_time;                              // 時間旗標
+uint32_t now_for_time;                               // 時間快照
+int now_count_number;                                // 現在計數器的值
+int last_count_number = 0;                           // 上一次的計數值
 void speed_sensor_init() {
-  
- pcnt_unit_config_t pcnt_config = {
-    .pulse_gpio_num = SPEED_SENSOR_PIN,           //設定使用的腳位
-    .ctrl_gpio_num = PCNT_PIN_NOT_USED,
-    .lctrl_mode = PCNT_MODE_KEEP,
-    .hctrl_mode = PCNT_MODE_KEEP,
-    .pos_mode = PCNT_COUNT_INC,
-    .neg_mode = PCNT_COUNT_DIS,
-    .counter_h_lim = 32767,                       //計數器最大值
-    .counter_l_lim = -1,                          //計數器最小值
-    .unit = PCNT_UNIT_0,                          //使用通道
-    .channel = PCNT_CHANNEL_0,
+
+  //配置計數器
+ pcnt_unit_config_t unit_config = {
+    .low_limit = -30000,                             // 硬體計數下限
+    .high_limit = 30000,                             // 硬體計數上限
     .flags = {
-    .accum_count = true
+    .accum_count = true                              // 開啟擴展32位累加計數
     }
   };
+pcnt_new_unit(&unit_config, &pcnt_unit);             // 套用配置
  
-pcnt_unit_config(&pcnt_config);      //啟用配置
-pcnt_counter_pause(PCNT_UNIT_0);       //暫停計數
-pcnt_counter_clear(PCNT_UNIT_0);       //清除計數
+// 配置計數器通道/腳位設定
+pcnt_chan_config_t chan_config = {
+    .edge_gpio_num = SPEED_SENSOR_PIN,    // 接收脈衝訊號的 GPIO 腳位
+    .level_gpio_num = -1                  // 控制方向的 GPIO 腳位 (-1 代表不使用)
+  };
+pcnt_new_channel(pcnt_unit, &chan_config, &pcnt_chan);       //套用配置
+
+// 設定觸發模式
+pcnt_channel_set_edge_action(
+        pcnt_chan, 
+        PCNT_CHANNEL_EDGE_ACTION_INCREASE, // 遇到上升沿計數值 +1
+        PCNT_CHANNEL_EDGE_ACTION_HOLD      // 遇到下降沿保持不變
+    );
+
+// 設定硬體觸發擴展閾值
+pcnt_unit_add_watch_point(pcnt_unit, 30000);
+pcnt_unit_add_watch_point(pcnt_unit, -30000);
+
+pcnt_unit_enable(pcnt_unit);       // 啟用 PCNT 硬體電源與時脈
+pcnt_unit_clear_count(pcnt_unit);  // 歸零計數值
 Serial.println("Speed sensor ready.");
+wait_for_time = millis();          // 定位時間
+pcnt_unit_start(pcnt_unit);        // 開始計數
+Serial.println("Speed sensor started.");
 }
 
 
 
 void speed_sensor_start() {
-wait_for_time = millis();                                     //定位時間
-pcnt_counter_clear(PCNT_UNIT_0);                   //清除計數
-pcnt_counter_resume(PCNT_UNIT_0);                  //開始計數
-Serial.println("Speed sensor started.");
-  while (1) {                                                //轉速判斷
-    if (millis() - wait_for_time >= settings.read_space) {
-    pcnt_get_counter_value(PCNT_UNIT_0, &now_count_number);  //讀取計數器值
+    //轉速判斷
+    now_for_time = millis();         // 時間快照
+    if (now_for_time - wait_for_time >= settings.read_space) {
+    pcnt_unit_get_count(pcnt_unit, &now_count_number);  //讀取計數器值
     
-    settings.now_speed = ( (now_count_number - last_count_number)                //計算轉速
-                       + (now_overflow_number - last_overflow_number) *32768.0f ) * 1000.0f * 60.0f
-                       /(settings.read_space * settings.space_number);
+    settings.now_speed = ( (now_count_number - last_count_number) * 1000.0f * 60.0f) //計算轉速
+                       / (( now_for_time - wait_for_time) * settings.space_number);
 
-    last_count_number = now_count_number;                    //更新計數器旗標 
-    wait_for_time = millis();                                //更新時間旗標
-    
-    }
+    last_count_number = now_count_number;                    // 更新計數器旗標 
+    wait_for_time = now_for_time;                            // 更新時間旗標
   }
 }
