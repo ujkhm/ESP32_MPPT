@@ -1,7 +1,7 @@
 #pragma once
 
 // GPIO36 (VP). Older docs used SENSOR_VP; esp32dev pins_arduino.h only defines A0 (=36).
-#define SPEED_SENSOR_PIN 36
+#define SPEED_SENSOR_PIN 12                //36
 #define MOTOR_PWM_PIN 26
 #define SERVO_PIN 23
 #define BUCK_PWM_PIN 14

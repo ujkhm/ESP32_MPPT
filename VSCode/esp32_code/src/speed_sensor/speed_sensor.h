@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "freertos/FreeRTOS.h"
 #include "driver/pulse_cnt.h"
 #include "pins/pins.h"
 #include "settings/settings.h"

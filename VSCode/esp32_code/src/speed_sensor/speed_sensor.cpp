@@ -10,7 +10,6 @@ pcnt_channel_handle_t pcnt_chan = NULL;
 
 uint32_t wait_for_time;                              // 時間旗標
 uint32_t now_for_time;                               // 時間快照
-int now_count_number;                                // 現在計數器的值
 int last_count_number = 0;                           // 上一次的計數值
 void speed_sensor_init() {
 
@@ -56,12 +55,12 @@ void speed_sensor_start() {
     //轉速判斷
     now_for_time = millis();         // 時間快照
     if (now_for_time - wait_for_time >= settings.read_space) {
-    pcnt_unit_get_count(pcnt_unit, &now_count_number);  //讀取計數器值
+    pcnt_unit_get_count(pcnt_unit, &settings.now_count_number);  //讀取計數器值
     
-    settings.now_speed = ( (now_count_number - last_count_number) * 1000.0f * 60.0f) //計算轉速
+    settings.now_speed = ( (settings.now_count_number - last_count_number) * 1000.0f * 60.0f) //計算轉速
                        / (( now_for_time - wait_for_time) * settings.space_number);
 
-    last_count_number = now_count_number;                    // 更新計數器旗標 
+    last_count_number = settings.now_count_number;                    // 更新計數器旗標 
     wait_for_time = now_for_time;                            // 更新時間旗標
   }
 }
