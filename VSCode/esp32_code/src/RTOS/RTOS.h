@@ -8,7 +8,7 @@
 // 所有任務優先級與執行核心
 
 //Core 0
-#define RTOS_PID_LEVEL 15
+#define RTOS_PID_LEVEL 16
 #define RTOS_SPEED_SENSOR_LEVEL 15
 
 //Core 1

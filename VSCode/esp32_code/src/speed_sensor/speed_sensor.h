@@ -7,8 +7,5 @@
 #include "esp32-hal.h"
 #include "RTOS/RTOS.h"
 
-//轉速測量模組初始化，並等開始測量轉速
-void speed_sensor_init();
-
-//需要重複執行
+//轉速測量模組初始化，並始測量轉速(須放在setup()中執行)
 void speed_sensor_start();
