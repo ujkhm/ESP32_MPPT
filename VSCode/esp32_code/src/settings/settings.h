@@ -12,6 +12,9 @@ extern speed_sensor settings; // 實體在speed_sensor.cpp中
 
 struct motor_PID
 {
-    int keep_ticls; // 目標轉速對應的脈衝次數
+    int keep_ticls = 0; // 目標轉速對應的脈衝次數
+    uint32_t pwm_freq = 20000; // PWM頻率
+    uint8_t pwm_res = 10;       // PWM解析度(位元)
 };
 extern motor_PID PID_settings;
+

@@ -8,7 +8,7 @@ motor_PID PID_settings{};
 void motor_PID_init(void *pvParameters)
 {
     // 基礎初始化
-
+ledcAttach(MOTOR_PWM_PIN, PWM_FREQ, PWM_RES);
     while (1)
     {
         // 這裡放每一次要執行的pid計算
