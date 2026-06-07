@@ -2,7 +2,7 @@
 
 這是一個由ESP32為核心的MPPT系統，用於測量小型有刷直流馬達作為發電機時的功率曲線，包含完整的電路圖、PCB及MPPT完整算法
 文件架構:<br>
-micro generator<br>
+ESP32_MPPT<br>
 |<br>
 |---[3D_print_Component(存放本專案所需之3D模型)](./3D_print_Component/)<br>
 |<br>
