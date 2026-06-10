@@ -8,7 +8,7 @@ ESP32_MPPT<br>
 |<br>
 |---[BOM(存放PCB所需元件列表)](./BOM/)<br>
 |<br>
-|---[KiCad(存放完整原理圖及PCB)](./KiCad/)<br>
+|---[KiCad(存放原理圖及PCB)](./KiCad/)<br>
 |<br>
 |---[VSCode(存放專案所需程式)](./VSCode/)<br>
 
