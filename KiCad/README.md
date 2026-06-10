@@ -2,8 +2,9 @@
 
 本專案電路使用KiCad 9做開發，無修改原理圖/PCB需求的可以直接使用資料夾內的Gerber.zip檔直接提交給板廠製板<br><br>
 附上原理突及PCB快照<br>
-<a href="images/KiCad.pdf" target="_blank" rel="noopener noreferrer">原理圖</a><br>
-<a href="images/KiCad_PCB.pdf" target="_blank" rel="noopener noreferrer">PCB</a><br>
+<a href="https://github.com/ujkhm/ESP32_MPPT/blob/main/KiCad/images/KiCad.pdf" target="_blank" rel="noopener noreferrer">原理圖</a><br>
+
+<a href="https://github.com/ujkhm/ESP32_MPPT/blob/main/KiCad/images/KiCad_PCB.pdf" target="_blank" rel="noopener noreferrer">PCB</a><br>
 
 
 [回到主頁](../README.md)
