@@ -4,5 +4,6 @@
 附上原理突及PCB快照<br>
 [原理圖](images/KiCad.pdf)<br>
 [PCB](images/KiCad_PCB.pdf)<br>
-
+建議下載後用PDF檢視工具檢視，以上快照位於ESP32_MPPT/KiCad/images/下<br>
+另有BOM表單位於BOM資料夾下[點我前往](../BOM/README.md)
 [回到主頁](../README.md)
