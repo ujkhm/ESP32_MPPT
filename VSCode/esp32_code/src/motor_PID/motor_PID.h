@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include "settings/settings.h"
+#include "pins/pins.h"
 #include "RTOS/RTOS.h"
 #include "esp32-hal.h"
 
