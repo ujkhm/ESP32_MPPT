@@ -10,11 +10,12 @@
 // speed sensor settings and shared variables
 struct speed_sensor
 {
-    uint16_t read_space = 15;                // 多久讀取一次速度感測器的值,單位為毫秒(此值亦是PID之計算間隔)
-    uint64_t now_speed;                      // 現在主動力馬達的轉速(RPM)
-    uint8_t buf_idx : buf_idx_bit = 0;       // 測速時只記錄最後4個數據(2^2=4)
-    uint32_t cap_buffer[(1 << buf_idx_bit)]; // 用於儲存最後的幾個數據(取決於上面的buf_idx)
-    uint8_t count_number : buf_idx_bit;      // 指標快照
+    uint16_t read_space = 15;                     // 多久讀取一次速度感測器的值,單位為毫秒(此值亦是PID之計算間隔)
+    float now_speed;                              // 現在主動力馬達的轉速(RPM)
+    uint8_t buf_idx : buf_idx_bit = 0;            // 測速時只記錄最後4個數據(2^2=4)
+    uint32_t cap_buffer[(1 << buf_idx_bit)];      // 用於儲存最後的幾個數據(取決於上面的buf_idx)
+    uint8_t count_number : buf_idx_bit;           // 指標快照
+    uint16_t Timestamp_state[(1 << buf_idx_bit)]; // 用於儲存cap_buffer陣列中數值的狀態(0:可用 1:不可用)
 };
 extern volatile speed_sensor settings; // 實體在speed_sensor.cpp中
 

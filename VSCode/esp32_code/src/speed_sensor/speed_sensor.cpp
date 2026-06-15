@@ -19,10 +19,10 @@ static portMUX_TYPE my_mutex = portMUX_INITIALIZER_UNLOCKED;
 uint32_t cap_buffer_Snapshot[(1 << buf_idx_bit)]; // 脈衝時間戳快照
 
 // 編譯時先計算出常數，就不用每次MCU還要再算一遍
-constexpr uint64_t RPM_CONSTANT = (80000000ULL * 60ULL * 4ULL) / (2 * space_number);
+constexpr float RPM_CONSTANT = (80000000ULL * 60ULL);
 
 // 時間差變數
-uint64_t time_diff;
+uint32_t time_diff;
 
 // 先宣告回乎函數的原型
 static bool mcpwm_cap_cb(mcpwm_cap_channel_handle_t cap_chan,
@@ -71,12 +71,18 @@ void speed_sensor_init(void *pvParameters)
     portEXIT_CRITICAL(&my_mutex);                        // 開啟中斷
     constexpr uint8_t idx_mask = (1 << buf_idx_bit) - 1; // 環形遮罩
     // 計算時間戳差
-    time_diff = cap_buffer_Snapshot[(settings.count_number - (space_number * 2)) & idx_mask] -
-                cap_buffer_Snapshot[settings.count_number];
+
+    // 最新時間戳
+    volatile uint8_t now_timestamp = ((settings.count_number - 1) & idx_mask);
+    // 上一圈的同個位置時間戳
+    volatile uint8_t last_timestamp = ((settings.count_number - (space_number * 2) - 1) & idx_mask);
+    time_diff = cap_buffer_Snapshot[now_timestamp] -
+                cap_buffer_Snapshot[last_timestamp];
     // 轉速計算
-    if (time_diff != 0) // 預防除以0的狀況
+    if (time_diff != 0 && settings.Timestamp_state[now_timestamp] == 0) // 預防除以0的狀況以及該資料是否可用
     {
       settings.now_speed = RPM_CONSTANT / time_diff;
+      settings.Timestamp_state[now_timestamp] = 1;
     }
     else
     {
@@ -93,6 +99,8 @@ static bool IRAM_ATTR mcpwm_cap_cb(mcpwm_cap_channel_handle_t cap_chan,
 
   // 獲取硬體鎖存的計時器數值 (Ticks)
   settings.cap_buffer[settings.buf_idx] = edata->cap_value;
+  // 更新狀態陣列內的標示
+  settings.Timestamp_state[settings.buf_idx] = 0;
   // 更新指標
   settings.buf_idx = settings.buf_idx + 1;
   return false;
