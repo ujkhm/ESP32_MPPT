@@ -1,5 +1,6 @@
 #pragma once
-
+#include <Arduino.h>
+#include <Preferences.h> // 用於將變數存入FLASH
 // 常數設定
 
 // speed_sensor.h
@@ -21,8 +22,32 @@ extern volatile speed_sensor settings; // 實體在speed_sensor.cpp中
 
 struct motor_PID
 {
-    int keep_ticls = 0;        // 目標轉速對應的脈衝次數
+    float keep_rpm = 0;        // 目標轉速對應的脈衝次數
     uint32_t pwm_freq = 20000; // PWM頻率
     uint8_t pwm_res = 10;      // PWM解析度(位元)
+    float Kp;                  // 以下參數如要修改預設值請到void load()內修改
+    float Ki;
+    float Kd;
+    // 【結構體自我載入】
+    void load()
+    {
+        Preferences prefs;
+        prefs.begin("pid_cfg", true); // 只讀模式
+        Kp = prefs.getFloat("Kp", 0.0f);
+        Ki = prefs.getFloat("Ki", 0.0f);
+        Kd = prefs.getFloat("Kd", 0.0f);
+        prefs.end();
+    }
+
+    // 【結構體自我儲存】
+    void save() volatile
+    {
+        Preferences prefs;
+        prefs.begin("pid_cfg", false); // 讀寫模式
+        prefs.putFloat("Kp", Kp);
+        prefs.putFloat("Ki", Ki);
+        prefs.putFloat("Kd", Kd);
+        prefs.end();
+    }
 };
 extern volatile motor_PID PID_settings; // 實體在motor_PID.cpp中
