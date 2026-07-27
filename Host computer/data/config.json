@@ -1,0 +1,15 @@
+{
+  "serial": {
+    "port": "",
+    "baudrate": 115200,
+    "timeout": 1.0
+  },
+  "logging": {
+    "auto_save_csv": true,
+    "csv_prefix": "speed_log"
+  },
+  "ui": {
+    "refresh_ms": 200,
+    "chart_max_points": 300
+  }
+}

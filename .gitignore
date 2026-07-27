@@ -74,3 +74,15 @@ Thumbs.db
 ~$*
 ~*
 .~$*
+
+# -------------------------------
+# 5. Host computer (上位機)
+# -------------------------------
+Host computer/.venv/
+Host computer/build/
+Host computer/dist/
+Host computer/__pycache__/
+Host computer/ESP32_MPPT_Host.exe
+Host computer/data/logs/*
+!Host computer/data/logs/.gitkeep
+!Host computer/data/logs/.gitignore
