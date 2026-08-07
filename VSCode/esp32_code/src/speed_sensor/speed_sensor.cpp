@@ -32,7 +32,7 @@ static uint32_t last_edge_count = 0;           // 上次已處理到的絕對邊
 static float last_valid_rpm = 0.0f;            // 最近一次可信轉速(正常模式保持用)
 static uint32_t last_edge_ms = 0;              // 最近一次邊緣到達的 millis
 static uint16_t settle_samples_local = 0;      // 開環固定 PWM 後，已觀察到的同位置整圈樣本數(本地副本)
-static uint32_t no_pulse_pwm_ms = 0;           // 有 PWM 卻無脈衝的累計時間(失控保護)
+static uint32_t no_pulse_pwm_ms = 0;           // 有 PWM 卻無脈衝的累計時間(失控保護，全程持續累計)
 static uint32_t last_protect_ms = 0;
 static uint32_t probe_arm_edge = 0;            // probe 請求當下的邊緣計數(只收之後的新資料)
 static bool probe_armed = false;
@@ -157,20 +157,23 @@ static void runaway_protect(uint32_t now_ms, bool has_new_edge)
     return;
   }
 
-  // 「有 PWM 卻無脈衝」只在已固定 duty 或已定速後啟用
-  // (階梯升速初期低 duty 可能暫時無邊緣，避免誤跳)
+  // ★馬達通電看門狗(單一機制，全程覆蓋)：只要有 PWM 輸出(從剛啟動的第一階
+  // 開環升速，到就緒觀察/自動調參/定速運行，全程都算)，就持續檢查「多久沒有
+  // 新脈衝」；只要連續 NO_PULSE_TIMEOUT_MS 沒有新脈衝就立即鎖定，PWM=0 時
+  // 累計時間歸零。全程只有這一個閾值、沒有分段/分階，不會有空窗。
   const uint32_t dt = (last_protect_ms == 0) ? settings.read_space : (now_ms - last_protect_ms);
   last_protect_ms = now_ms;
 
-  const bool protect_stall =
-      (settings.ol_hold || settings.const_speed_ready) && (settings.ol_pwm_cmd > 0);
+  const bool protect_stall = (settings.ol_pwm_cmd > 0);
 
   if (protect_stall && !has_new_edge)
   {
     no_pulse_pwm_ms += dt;
-    if (no_pulse_pwm_ms >= (uint32_t)FAULT_STALL_WITH_PWM_MS)
+    if (no_pulse_pwm_ms >= (uint32_t)NO_PULSE_TIMEOUT_MS)
     {
-      trip_fault(FAULT_STALL_WITH_PWM);
+      Serial.printf("[SPD] watchdog: no pulse for %ums while pwm=%u\n",
+                    (unsigned)NO_PULSE_TIMEOUT_MS, (unsigned)settings.ol_pwm_cmd);
+      trip_fault(FAULT_NO_PULSE_TIMEOUT);
       return;
     }
   }

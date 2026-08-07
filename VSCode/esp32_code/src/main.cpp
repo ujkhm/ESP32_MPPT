@@ -1,16 +1,17 @@
 #include <Arduino.h>
 #include "HardwareSerial.h"
+#include "driver/gpio.h"
 #include "speed_sensor/speed_sensor.h"
 #include "motor_PID/motor_PID.h"
+#include "ina232/ina232.h"
+#include "board_ui/board_ui.h"
 
-// 除錯輸出週期(ms)；純 RPM 行仍每秒一筆，供上位機繪圖
 static constexpr uint32_t SERIAL_DEBUG_MS = 250;
 static constexpr uint32_t SERIAL_RPM_MS = 1000;
 
 uint32_t Serial_debug_time;
 uint32_t Serial_rpm_time;
 
-// 上次狀態(用於事件觸發列印，避免刷屏)
 static uint8_t last_phase = 0xFF;
 static uint8_t last_fault_code = 0xFF;
 static bool last_ol_hold = false;
@@ -19,6 +20,128 @@ static bool last_probe_ready = false;
 static bool last_tune_active = false;
 static bool last_tune_done = false;
 static bool last_speed_stable = false;
+static uint8_t last_ui_state = 0xFF;
+
+// ---- START 鈕(SW2 → IO15，對 GND；板端無外接上拉) ----
+static volatile bool start_irq_pending = false;
+static uint32_t start_last_accept_ms = 0;
+static bool start_raw_last = false;
+static bool start_stable = false;
+static bool start_prev = false;
+static uint32_t start_last_change_ms = 0;
+
+static void IRAM_ATTR start_isr()
+{
+  start_irq_pending = true;
+}
+
+static bool start_raw_pressed()
+{
+#if START_ACTIVE_LOW
+  return digitalRead(START_PIN) == LOW;
+#else
+  return digitalRead(START_PIN) == HIGH;
+#endif
+}
+
+static void start_pin_init()
+{
+  pinMode(START_PIN, INPUT_PULLUP);
+  gpio_pullup_en((gpio_num_t)START_PIN);
+  gpio_pulldown_dis((gpio_num_t)START_PIN);
+  delay(5);
+
+  start_raw_last = start_raw_pressed();
+  start_stable = start_raw_last;
+  start_prev = start_stable;
+  start_last_change_ms = millis();
+
+  attachInterrupt(digitalPinToInterrupt(START_PIN), start_isr, CHANGE);
+
+  Serial.printf("[MAIN] START pin=IO%u pullup ON level=%d pressed=%d "
+                "(idle expect level=1; press→0)\n",
+                (unsigned)START_PIN, digitalRead(START_PIN), (int)start_raw_pressed());
+}
+
+static void trigger_estop()
+{
+  settings.fault = true;
+  settings.fault_code = FAULT_ESTOP;
+  settings.const_speed_ready = false;
+  settings.ol_hold = false;
+  settings.ol_probe_request = false;
+  settings.ol_probe_ready = false;
+  settings.init_phase = SPEED_PHASE_FAULT;
+  settings.speed_valid = false;
+  settings.speed_stable = false;
+  settings.ol_pwm_cmd = 0;
+  PID_settings.autotune_active = false;
+  ledcWrite(MOTOR_PWM_PIN, 0);
+
+  ui_settings.state = UI_ESTOP;
+  Serial.println("[MAIN] ESTOP locked — reboot required");
+}
+
+static void start_motor_control()
+{
+  if (ui_settings.motor_started)
+  {
+    return;
+  }
+  motor_PID_start();
+  speed_sensor_start();
+  ui_settings.motor_started = true;
+  ui_settings.state = UI_RUNNING;
+  Serial.println("[MAIN] START → motor_PID + speed_sensor started");
+}
+
+// 去彈跳後偵測按下邊緣；ISR 旗標加速喚醒，仍以穩定電平為準
+static void handle_start_button(uint32_t now_ms)
+{
+  if (start_irq_pending)
+  {
+    start_irq_pending = false;
+  }
+
+  const bool raw = start_raw_pressed();
+  if (raw != start_raw_last)
+  {
+    Serial.printf("[MAIN] START raw %d -> %d @%lums (gpio=%d)\n",
+                  (int)start_raw_last, (int)raw, (unsigned long)now_ms,
+                  digitalRead(START_PIN));
+    start_raw_last = raw;
+    start_last_change_ms = now_ms;
+  }
+  else if ((now_ms - start_last_change_ms) >= (uint32_t)START_DEBOUNCE_MS)
+  {
+    start_stable = start_raw_last;
+  }
+
+  const bool edge = (start_stable && !start_prev);
+  start_prev = start_stable;
+  if (!edge)
+  {
+    return;
+  }
+
+  // 額外保護：兩次有效動作至少間隔 debounce*2
+  if ((now_ms - start_last_accept_ms) < (uint32_t)(START_DEBOUNCE_MS * 2))
+  {
+    return;
+  }
+  start_last_accept_ms = now_ms;
+
+  Serial.printf("[MAIN] START edge accepted, state=%u\n", (unsigned)ui_settings.state);
+
+  if (ui_settings.state == UI_WAIT_START)
+  {
+    start_motor_control();
+  }
+  else if (ui_settings.state == UI_RUNNING)
+  {
+    trigger_estop();
+  }
+}
 
 static const char *phase_name(uint8_t phase)
 {
@@ -51,18 +174,34 @@ static const char *fault_name(uint8_t code)
     return "NONE";
   case FAULT_RUNAWAY_RPM:
     return "RUNAWAY_RPM";
-  case FAULT_STALL_WITH_PWM:
-    return "STALL_WITH_PWM";
+  case FAULT_NO_PULSE_TIMEOUT:
+    return "NO_PULSE_TIMEOUT";
   case FAULT_PWM_MAX_NO_SPEED:
     return "PWM_MAX_NO_SPEED";
   case FAULT_AUTOTUNE_FAIL:
     return "AUTOTUNE_FAIL";
+  case FAULT_ESTOP:
+    return "ESTOP";
   default:
     return "UNKNOWN";
   }
 }
 
-// 狀態變化時立刻印一行事件，方便抓起動/故障瞬間
+static const char *ui_state_name(uint8_t st)
+{
+  switch (st)
+  {
+  case UI_WAIT_START:
+    return "WAIT_START";
+  case UI_RUNNING:
+    return "RUNNING";
+  case UI_ESTOP:
+    return "ESTOP";
+  default:
+    return "UNKNOWN";
+  }
+}
+
 static void serial_print_events()
 {
   const uint8_t phase = settings.init_phase;
@@ -71,6 +210,12 @@ static void serial_print_events()
   const bool ready = settings.const_speed_ready;
   const bool probe_rdy = settings.ol_probe_ready;
 
+  if (ui_settings.state != last_ui_state)
+  {
+    Serial.printf("[EVT] ui %s -> %s\n",
+                  ui_state_name(last_ui_state), ui_state_name(ui_settings.state));
+    last_ui_state = ui_settings.state;
+  }
   if (phase != last_phase)
   {
     Serial.printf("[EVT] phase %s -> %s\n",
@@ -139,15 +284,18 @@ static void serial_print_events()
   }
 }
 
-// 週期性狀態總覽(上位機會略過非純數字行)
 static void serial_print_debug_status()
 {
   Serial.printf(
-      "[DBG] t=%lu phase=%s rpm=%.1f valid=%d pwm=%u hold=%d "
+      "[DBG] t=%lu ui=%s start=%d/%d phase=%s rpm=%.1f valid=%d pwm=%u hold=%d "
       "probe_req=%d probe_rdy=%d probe_rpm=%.1f "
       "settle=%u/%u ready=%d ol_hold_ok=%d speed_stable=%d fault=%d(%s) edges=%lu "
-      "keep=%.1f tune=%d/%d tunedNVS=%d Kp=%.4f Ki=%.4f Kd=%.4f\n",
+      "keep=%.1f tune=%d/%d tunedNVS=%d Kp=%.4f Ki=%.4f Kd=%.4f "
+      "V=%.2f I=%.3f P=%.2f ina=%d/%d n=%lu\n",
       (unsigned long)millis(),
+      ui_state_name(ui_settings.state),
+      digitalRead(START_PIN),
+      (int)start_raw_pressed(),
       phase_name(settings.init_phase),
       (double)settings.now_speed,
       (int)settings.speed_valid,
@@ -170,13 +318,19 @@ static void serial_print_debug_status()
       (int)PID_settings.tuned,
       (double)PID_settings.Kp,
       (double)PID_settings.Ki,
-      (double)PID_settings.Kd);
+      (double)PID_settings.Kd,
+      (double)ina_settings.bus_V,
+      (double)ina_settings.current_A,
+      (double)ina_settings.power_W,
+      (int)ina_settings.online,
+      (int)ina_settings.data_valid,
+      (unsigned long)ina_settings.sample_count);
 }
 
 void setup()
 {
   Serial.begin(115200);
-  delay(200); // 等 USB 序列埠就緒，避免開頭訊息被吃掉
+  delay(200);
   Serial.println();
   Serial.println("[BOOT] ESP32 micro-generator firmware");
   Serial.printf("[BOOT] init_need_rpm>=%.1f settle=%ums probe_timeout=%ums "
@@ -202,33 +356,52 @@ void setup()
                 (double)PID_TUNE_GAIN_SCALE,
                 (unsigned)PID_OUTPUT_SLEW_MAX,
                 (double)SPEED_FILTER_ALPHA);
+  Serial.printf("[BOOT] I2C OLED=soft INA=soft@%uHz | INA addr=0x%02X Rshunt=%.3fΩ Imax=%.2fA\n",
+                (unsigned)I2C_INA_FREQ_HZ,
+                (unsigned)INA232_I2C_ADDR,
+                (double)INA232_RSHUNT_OHM, (double)INA232_IMAX_A);
+  Serial.println("[BOOT] START handled in main; UI is display-only");
 
   Serial_debug_time = millis();
   Serial_rpm_time = millis();
 
-  motor_PID_start(); // 一定要先初始化PID模組再呼叫速度感測模組
-  speed_sensor_start();
-  Serial.println("[BOOT] tasks started (motor_PID + speed_sensor)");
+  start_pin_init();
+  board_ui_oled_init();
+  board_ui_start();
+  ina232_start();
+  Serial.println("[BOOT] tasks started (board_ui display + ina232)");
 }
 
 void loop()
 {
-  // 事件：階段 / hold / probe / ready / fault 變化立刻輸出
-  serial_print_events();
-
   const uint32_t now = millis();
 
-  // 週期除錯狀態
+  // START：起動 / 急停
+  handle_start_button(now);
+
+  // 其他模組 fault → UI 跟著進急停畫面
+  if ((ui_settings.state == UI_RUNNING) && settings.fault)
+  {
+    ui_settings.state = UI_ESTOP;
+  }
+
+  serial_print_events();
+
   if (now - Serial_debug_time >= SERIAL_DEBUG_MS)
   {
     serial_print_debug_status();
     Serial_debug_time = now;
   }
 
-  // 上位機相容：每秒一行純 RPM 數值
   if (now - Serial_rpm_time >= SERIAL_RPM_MS)
   {
     Serial.println(settings.now_speed);
     Serial_rpm_time = now;
   }
+
+  // ★關鍵：loop() 之前完全沒有任何讓出 CPU 的呼叫(無 delay/yield)，
+  // 會把 Core1 的 IDLE 任務餓死 → 觸發 Task Watchdog，造成週期性長時間卡頓
+  // (訊息斷斷續續、間隔越來越長，且 START 按鍵在卡頓期間完全偵測不到)。
+  // 1ms 對按鈕手動操作毫無影響，但足以餵飽 WDT、讓排程恢復正常。
+  vTaskDelay(pdMS_TO_TICKS(1));
 }

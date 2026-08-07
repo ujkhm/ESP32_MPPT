@@ -17,7 +17,7 @@
 
 // 診斷用(不影響控制邏輯)：PID_RUN 定速期間偵測異常事件並印一次 [EVT]，方便日後排查
 // 轉速忽然跳變/收斂變慢等現象時，快速判斷是感測端訊號問題還是馬達真實物理擾動
-#define SPEED_JUMP_WARN_RPM 120   // 單一測速週期(read_space)轉速變化超過此值視為異常，印警告
+#define SPEED_JUMP_WARN_RPM 120    // 單一測速週期(read_space)轉速變化超過此值視為異常，印警告
 #define SPEED_EDGE_GAP_WARN_MS 100 // 定速中連續無新邊緣超過此時間(仍未達 stall 判定)視為異常，印警告
 
 // 邊緣去彈跳(debounce)：光柵訊號偶爾會有機械彈跳/雜訊造成極短間隔的假觸發，
@@ -36,8 +36,19 @@
 #define MOTOR_STARTUP_PWM_MAX_RATIO 0.70f // 開環起動允許的最大 duty 比例
 
 // 失控保護
-#define RPM_RUNAWAY_MAX 17000.0f    // 轉速超過此值視為飛車，立即切斷輸出
-#define FAULT_STALL_WITH_PWM_MS 500 // 已 hold/定速 後：有 PWM 卻持續無脈衝的容許時間(ms)
+#define RPM_RUNAWAY_MAX 17000.0f // 轉速超過此值視為飛車，立即切斷輸出
+
+// ★馬達通電看門狗(單一閾值，涵蓋馬達通電全過程，無空窗)：
+// 只要 ol_pwm_cmd>0(馬達有 PWM 輸出——從剛按下 START 的第一階開環升速，
+// 到就緒觀察、自動調參、定速運行，全程都算)，且連續此時間內完全沒有
+// 新脈衝進來，立即緊急停止鎖定(需重開機)。
+// 從馬達一啟動就開始計時、全程持續生效，不會有「還沒等到某個階段」或
+// 「已經動過一次就永久失效」之類的空窗——任何時刻卡死(卡死/斷軸/感測器
+// 故障/接線脫落等)都會在此時限內被抓到。
+// 本機台不會有劇烈負載變化，正常運轉中脈衝間隔應遠小於此值；
+// 請依實測「按下 START 到第一次感應到脈衝」與「爬升過程中最大脈衝間隔」
+// 抓安全餘量調整，數值愈小保護愈即時，但也愈容易誤判。
+#define NO_PULSE_TIMEOUT_MS 200
 
 // PID 自動調參(sTune)：速度感測器調教完成(const_speed_ready)後執行
 // 注意：本機台 PWM→RPM 增益極大(小小的佔空比變化就能造成數千 RPM 變化)，
@@ -59,16 +70,16 @@
 //      比值高達約 4.9，直接套用會讓 Kp 放大近 5 倍而逼近臨界增益，必定劇烈震盪。
 //      (sTune 官方範例的 inputSpan/outputSpan 多半數量級相近、比值≈1，所以不會踩到)
 //      實際換算與重算規則見 motor_PID.cpp 的 sTune::tunings 分支
-#define PID_AUTOTUNE_ENABLE 1                // 1=啟用自動調參
-#define PID_AUTOTUNE_EVERY_BOOT 1            // 1=每次上電都調；0=僅 NVS 尚未 tuned 時調一次
-#define PID_TUNE_SETTLE_SEC 3                // 調參前在 outputStart 穩定秒數
-#define PID_TUNE_TEST_SEC 25                 // 開環步階測試時間上限(秒)；5T 法需約 5×Tau，寧可抓寬鬆
-#define PID_TUNE_SAMPLES 250                 // 測試取樣點數(建議 200~500)
-#define PID_TUNE_STEP_RATIO 0.08f            // 相對目前開環 duty 再升的比例(佔 max PWM)；愈小愈接近目標點附近的線性區
-#define PID_TUNE_INPUT_SPAN_MIN 2000.0f      // sTune 輸入(RPM)全幅估計下限，實際值於執行期依目前轉速動態估算
-#define PID_TUNE_ESTOP_RATIO 0.75f           // 調參期間緊急停止門檻 = RPM_RUNAWAY_MAX × 此比例(較保守)
-#define PID_TUNE_PRE_SETTLE_MS 500           // 測速就緒後，先等待此時間讓濾波轉速真正收斂，再鎖定 keep_rpm / 開始測試
-#define PID_TUNE_GAIN_SCALE 0.8f             // 對算出的 Kp/Ki/Kd 額外乘上的安全係數(<1 更保守)
+#define PID_AUTOTUNE_ENABLE 1           // 1=啟用自動調參
+#define PID_AUTOTUNE_EVERY_BOOT 1       // 1=每次上電都調；0=僅 NVS 尚未 tuned 時調一次
+#define PID_TUNE_SETTLE_SEC 3           // 調參前在 outputStart 穩定秒數
+#define PID_TUNE_TEST_SEC 25            // 開環步階測試時間上限(秒)；5T 法需約 5×Tau，寧可抓寬鬆
+#define PID_TUNE_SAMPLES 250            // 測試取樣點數(建議 200~500)
+#define PID_TUNE_STEP_RATIO 0.08f       // 相對目前開環 duty 再升的比例(佔 max PWM)；愈小愈接近目標點附近的線性區
+#define PID_TUNE_INPUT_SPAN_MIN 2000.0f // sTune 輸入(RPM)全幅估計下限，實際值於執行期依目前轉速動態估算
+#define PID_TUNE_ESTOP_RATIO 0.75f      // 調參期間緊急停止門檻 = RPM_RUNAWAY_MAX × 此比例(較保守)
+#define PID_TUNE_PRE_SETTLE_MS 500      // 測速就緒後，先等待此時間讓濾波轉速真正收斂，再鎖定 keep_rpm / 開始測試
+#define PID_TUNE_GAIN_SCALE 0.8f        // 對算出的 Kp/Ki/Kd 額外乘上的安全係數(<1 更保守)
 // NoOvershoot_PI 的閉環迴路增益 = Kp×製程增益 = 0.35×(Tau/死時間)，只由可控性比值決定。
 // 萬一某次量到異常小的死時間(雜訊或取樣抖動)會讓迴路增益暴衝而震盪，故對此比值設上限；
 // 20 對應迴路增益 7，對 Tau/td 已屬「很好控制」的系統而言仍相當保守
@@ -107,9 +118,46 @@ enum speed_fault_code : uint8_t
 {
     FAULT_NONE = 0,
     FAULT_RUNAWAY_RPM = 1,      // 轉速超過 RPM_RUNAWAY_MAX
-    FAULT_STALL_WITH_PWM = 2,   // 有 PWM 輸出卻測不到轉速
+    FAULT_NO_PULSE_TIMEOUT = 2, // 馬達通電看門狗：連續 NO_PULSE_TIMEOUT_MS 無新脈衝(全程涵蓋)
     FAULT_PWM_MAX_NO_SPEED = 3, // 開環已達上限仍無法達到可讀轉速
     FAULT_AUTOTUNE_FAIL = 4,    // PID 自動調參失敗/中止
+    FAULT_ESTOP = 5,            // 板載 START 鈕緊急停止(僅重開機可恢復)
+};
+
+// ---- I2C 匯流排頻率(Hz) ----
+// OLED 為模組(通常自帶上拉)；INA232 板端漏裝上拉，韌體需開 ESP32 內部上拉並可調時鐘
+#define I2C_OLED_FREQ_HZ 400000 // OLED(Wire / I2C0)：模組自帶上拉，可用 Fast-mode
+#define I2C_INA_FREQ_HZ 100000  // INA232(Wire1 / I2C1)：板端無外接上拉，必須用 100k；有外接 4.7k 後可改 400000
+
+// ---- INA232 電壓/電流感測 ----
+// 原理圖 R8=0.1Ω(2512)；ADCRANGE=0(±81.92mV) → 理論最大約 0.819A，故 Imax 取 0.8A 留餘量
+// 晶片端 AVG=1(每次轉換立即更新)；平均/平滑改由 ESP32 做 EMA
+#define INA232_I2C_ADDR 0x40     // INA232A + A0→GND；若 A0 接 VS/SDA/SCL 請改 0x41/0x42/0x43
+#define INA232_RSHUNT_OHM 0.1f   // 分流電阻(Ω)，對應原理圖 R8
+#define INA232_IMAX_A 0.8f       // 預期最大電流(A)，用於計算 Current_LSB / Calibration
+#define INA232_ADCRANGE_80MV 1   // 1=±81.92mV(ADCRANGE=0)；0=±20.48mV(ADCRANGE=1，CAL 需 /4)
+#define INA232_FILTER_ALPHA 0.2f // ESP32 端 EMA 係數(愈小愈平滑、愈慢反應)
+#define INA232_TASK_PERIOD_MS 1  // 讀取任務週期；1ms + 最短轉換時間 ≈ 盡可能快
+
+// ---- 板載互動介面(OLED + START) ----
+#define OLED_I2C_ADDR 0x3C // 0.96" SSD1306 常見位址
+#define UI_REFRESH_MS 200  // OLED 刷新週期(ms)
+// ★很多副廠「0.96" SSD1306」模組實際上是 SH1106 控制器：
+// 兩者初始化指令大部分共通，即使晶片其實是 SH1106，用 SSD1306 驅動送指令
+// 對方仍會正常 ACK，u8g2.begin() 因此回傳成功，但畫面完全不會顯示
+// (定址方式不同)。若換新模組後出現「有找到位址、begin 成功、但螢幕全黑」，
+// 把下面改成 2 強制用 SH1106 測試看看；改回 1 可強制 SSD1306。
+// 0 = 自動(先試 SSD1306，失敗才試 SH1106；SSD1306 誤判 ACK 時無法偵測到)
+#define OLED_CONTROLLER_FORCE 0 // 0=自動 1=強制SSD1306 2=強制SH1106
+#define START_DEBOUNCE_MS 40    // START 鈕去彈跳時間(ms)
+#define START_ACTIVE_LOW 1      // 1=按下為 LOW(INPUT_PULLUP)；0=按下為 HIGH
+
+// 互動介面狀態(供除錯與模組協調)
+enum ui_app_state : uint8_t
+{
+    UI_WAIT_START = 0, // 開機等待按下 START 才開始測試
+    UI_RUNNING = 1,    // 已啟動馬達控制，螢幕顯示即時資訊
+    UI_ESTOP = 2,      // 緊急停止鎖定，僅重開機可恢復
 };
 
 // 變數設定
@@ -187,3 +235,25 @@ struct motor_PID
     }
 };
 extern volatile motor_PID PID_settings; // 實體在motor_PID.cpp中
+
+// INA232 感測結果(晶片每次轉換即讀；下列為 ESP32 EMA 後的對外數值)
+struct ina232_sensor
+{
+    float bus_V = 0.0f;        // 匯流排電壓(V)
+    float current_A = 0.0f;    // 電流(A)，有號
+    float power_W = 0.0f;      // 功率(W) = |V×I| 或由暫存器換算後再平滑
+    float shunt_mV = 0.0f;     // 分流電壓(mV)，除錯用
+    bool online = false;       // 是否成功辨識到 INA232(Manufacturer ID)
+    bool data_valid = false;   // 是否已有至少一筆成功讀值
+    uint32_t sample_count = 0; // 累計成功讀取次數
+};
+extern volatile ina232_sensor ina_settings; // 實體在 ina232.cpp
+
+// 板載互動介面共享狀態
+struct board_ui
+{
+    uint8_t state = UI_WAIT_START; // 目前 UI 狀態機
+    bool motor_started = false;    // 是否已呼叫馬達/測速初始化
+    bool oled_ok = false;          // OLED 是否初始化成功
+};
+extern volatile board_ui ui_settings; // 實體在 board_ui.cpp

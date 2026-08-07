@@ -1,0 +1,193 @@
+Interesting nets:
+  [  5 pts] J PWR:+3V3
+  [  5 pts] J LBL:IN-
+  [  5 pts] J PWR:+5V
+  [  5 pts] J LBL:IN+
+  [  4 pts] J PWR:+3V3
+  [  4 pts] LBL:BUCK_PWM
+  [  3 pts] J PWR:+5V
+  [  3 pts] J PWR:+3V3
+  [  3 pts] J PWR:+5V
+  [  3 pts] J PWR:+3V3
+  [  3 pts] J PWR:+5V
+  [  3 pts] PWR:+5V
+  [  3 pts] J PWR:+3V3
+  [  2 pts] LBL:MOTOR
+  [  2 pts] PWR:+3V3
+  [  2 pts] LBL:motor_PWM
+  [  2 pts] J PWR:+5V
+  [  2 pts] PWR:+5V
+  [  2 pts] PWR:VCC
+  [  2 pts] PWR:VCC
+  [  2 pts] LBL:BUCK_PWM
+  [  1 pts] PWR:+3V3
+  [  1 pts] LBL:motor_PWM
+  [  1 pts] PWR:+5V
+  [  1 pts] PWR:+3V3
+  [  1 pts] PWR:+3V3
+  [  1 pts] LBL:BUCK_PWM
+
+Lib defs with pins: 22
+  Connector:Barrel_Jack_MountingPin: [('MP', 'MountPin'), ('1', '~'), ('2', '~')]
+  Connector:Conn_01x03_Pin: [('1', 'Pin_1'), ('2', 'Pin_2'), ('3', 'Pin_3')]
+  DC-DC POWER L1:WE-PD_1260: [('1', '~'), ('2', '~')]
+  Diode:B340: [('1', 'K'), ('2', 'A')]
+  Diode:SS14: [('1', 'K'), ('2', 'A')]
+  INA232AIDDFR:INA232AIDDFR: [('1', 'IN+'), ('2', 'IN-'), ('7', 'A0'), ('5', 'SCL'), ('6', 'SDA'), ('4', 'VS'), ('8', 'ALERT'), ('3', 'GND')]
+  IRF3708:IRF3708PBF-VB: [('1', 'G'), ('2', 'D'), ('3', 'S')]
+  MIC4420YM:MIC4420YM: [('1', 'VS'), ('2', 'IN'), ('3', 'NC'), ('4', 'GND'), ('8', 'VS'), ('7', 'OUT'), ('6', 'OUT'), ('5', 'GND')]
+  MP1584:MP1584EN: [('7', 'VIN'), ('2', 'EN'), ('6', 'FREQ'), ('8', 'BST'), ('1', 'SW'), ('4', 'FB'), ('3', 'COMP'), ('5', 'GND'), ('9', 'GND')]
+  RF_Module:ESP32-WROOM-32E: [('3', 'EN'), ('4', 'SENSOR_VP'), ('5', 'SENSOR_VN'), ('21', 'NC'), ('22', 'NC'), ('17', 'NC'), ('18', 'NC'), ('20', 'NC'), ('19', 'NC'), ('32', 'NC'), ('2', 'VDD'), ('1', 'GND'), ('15', 'GND'), ('38', 'GND'), ('39', 'GND'), ('25', 'IO0'), ('35', 'TXD0/IO1'), ('24', 'IO2'), ('34', 'RXD0/IO3'), ('26', 'IO4'), ('29', 'IO5'), ('14', 'IO12'), ('16', 'IO13'), ('13', 'IO14'), ('23', 'IO15'), ('27', 'IO16'), ('28', 'IO17'), ('30', 'IO18'), ('31', 'IO19'), ('33', 'IO21'), ('36', 'IO22'), ('37', 'IO23'), ('10', 'IO25'), ('11', 'IO26'), ('12', 'IO27'), ('8', 'IO32'), ('9', 'IO33'), ('6', 'IO34'), ('7', 'IO35')]
+  RT9013-33GB:RT9013-33GB: [('3', 'EN'), ('1', 'VIN'), ('5', 'VOUT'), ('2', 'GND')]
+
+Pin points: 214
+wrote _motor_nets.txt 126
+
+=== C1 ===
+  pin1 ~            @(30.48, 175.26) tags=['PWR:GND']
+  pin2 ~            @(30.48, 167.64) tags=['J']
+         -> C6.2(~), D2.1(K), U2.6(FREQ)
+
+=== C2 ===
+  pin1 ~            @(142.24, 175.26) tags=['PWR:GND']
+  pin2 ~            @(142.24, 167.64) tags=['J', 'PWR:+5V']
+         -> D3.2(A), R1.2(~)
+
+=== C6 ===
+  pin1 ~            @(43.18, 175.26) tags=['PWR:GND']
+  pin2 ~            @(43.18, 167.64) tags=['J']
+         -> C1.2(~), D2.1(K), U2.6(FREQ)
+
+=== C14 ===
+  pin1 ~            @(146.05, 30.48) tags=['J', 'PWR:GND']
+         -> C15.1(~)
+  pin2 ~            @(146.05, 22.86) tags=['J', 'PWR:+5V']
+         -> C15.2(~)
+
+=== C15 ===
+  pin1 ~            @(160.02, 30.48) tags=['J', 'PWR:GND']
+         -> C14.1(~)
+  pin2 ~            @(160.02, 22.86) tags=['J', 'PWR:+5V']
+         -> C14.2(~)
+
+=== D1 ===
+  pin1 K            @(104.14, 167.64) tags=['J']
+         -> C4.1(~), L1.1(~)
+  pin2 A            @(104.14, 175.26) tags=['PWR:GND']
+
+=== D2 ===
+  pin1 K            @(29.21, 167.64) tags=['J']
+         -> C1.2(~), C6.2(~), U2.6(FREQ)
+  pin2 A            @(21.59, 167.64) tags=['PWR:VCC']
+
+=== D3 ===
+  pin1 K            @(132.08, 167.64) tags=[]
+         -> L1.2(~)
+  pin2 A            @(139.7, 167.64) tags=['J', 'PWR:+5V']
+         -> C2.2(~), R1.2(~)
+
+=== D4 ===
+  pin1 K            @(229.87, 124.46) tags=['PWR:+5V']
+  pin2 A            @(222.25, 124.46) tags=[]
+
+=== J1 ===
+  pin1 ~            @(30.48, 135.89) tags=['PWR:GND']
+  pin2 ~            @(30.48, 130.81) tags=['PWR:VCC']
+  pinMP MountPin     @(22.86, 125.73) tags=[]
+
+=== J3 ===
+  pin1 Pin_1        @(95.25, 25.4) tags=['PWR:+3V3']
+  pin2 Pin_2        @(95.25, 27.94) tags=[]
+  pin3 Pin_3        @(95.25, 30.48) tags=['PWR:GND']
+
+=== J4 ===
+  pin1 Pin_1        @(266.7, 24.13) tags=[]
+  pin2 Pin_2        @(266.7, 26.67) tags=['PWR:+5V']
+  pin3 Pin_3        @(266.7, 29.21) tags=['PWR:GND']
+
+=== J5 ===
+  pin1 Pin_1        @(266.7, 49.53) tags=[]
+  pin2 Pin_2        @(266.7, 52.07) tags=['PWR:+3V3']
+  pin3 Pin_3        @(266.7, 54.61) tags=['PWR:GND']
+
+=== J6 ===
+  pin1 Pin_1        @(242.57, 74.93) tags=['LBL:BUCK_PWM']
+  pin2 Pin_2        @(242.57, 77.47) tags=['J']
+         -> U8.1(~), U8.3(+), U8.5(+), U8.7(~)
+  pin3 Pin_3        @(242.57, 80.01) tags=['PWR:GND']
+
+=== L1 ===
+  pin1 ~            @(115.57, 167.64) tags=['J']
+         -> C4.1(~), D1.1(K)
+  pin2 ~            @(130.81, 167.64) tags=[]
+         -> D3.1(K)
+
+=== Q1 ===
+  pin1 G            @(209.55, 39.37) tags=['J']
+  pin2 D            @(217.17, 44.45) tags=['PWR:GND']
+  pin3 S            @(217.17, 34.29) tags=['LBL:MOTOR']
+
+=== R1 ===
+  pin1 ~            @(153.67, 175.26) tags=['J']
+         -> R2.2(~), U2.3(COMP)
+  pin2 ~            @(153.67, 167.64) tags=['J', 'PWR:+5V']
+         -> C2.2(~), D3.2(A)
+
+=== R2 ===
+  pin1 ~            @(153.67, 182.88) tags=['PWR:GND']
+  pin2 ~            @(153.67, 175.26) tags=['J']
+         -> R1.1(~), U2.3(COMP)
+
+=== R8 ===
+  pin1 ~            @(106.68, 109.22) tags=['J', 'LBL:IN-']
+         -> U6.5(SCL)
+  pin2 ~            @(106.68, 101.6) tags=['J', 'LBL:IN+']
+         -> U6.6(SDA)
+
+=== U2 ===
+  pin1 SW           @(85.09, 177.8) tags=[]
+  pin2 EN           @(54.61, 172.72) tags=[]
+  pin3 COMP         @(85.09, 170.18) tags=['J']
+         -> R1.1(~), R2.2(~)
+  pin4 FB           @(85.09, 175.26) tags=[]
+         -> C3.2(~)
+  pin5 GND          @(85.09, 165.1) tags=[]
+         -> C4.2(~)
+  pin6 FREQ         @(54.61, 167.64) tags=['J']
+         -> C1.2(~), C6.2(~), D2.1(K)
+  pin7 VIN          @(54.61, 177.8) tags=[]
+         -> R4.2(~)
+  pin8 BST          @(85.09, 180.34) tags=['PWR:GND']
+  pin9 GND          @(85.09, 165.1) tags=[]
+         -> C4.2(~)
+
+=== U4 ===
+  pin1 VIN          @(76.2, 143.51) tags=['PWR:GND']
+  pin2 GND          @(76.2, 133.35) tags=['J', 'PWR:+5V']
+         -> C7.1(~)
+  pin3 EN           @(45.72, 138.43) tags=['PWR:+5V']
+  pin5 VOUT         @(76.2, 138.43) tags=['J', 'PWR:+3V3']
+         -> C8.2(~)
+
+=== U6 ===
+  pin1 IN+          @(118.11, 119.38) tags=['LBL:SDA']
+  pin2 IN-          @(118.11, 116.84) tags=['LBL:SCL']
+  pin3 GND          @(148.59, 99.06) tags=['J', 'PWR:+3V3']
+         -> C12.2(~), C13.2(~)
+  pin4 VS           @(148.59, 124.46) tags=['PWR:GND']
+  pin5 SCL          @(118.11, 106.68) tags=['J', 'LBL:IN-']
+         -> R8.1(~)
+  pin6 SDA          @(118.11, 104.14) tags=['J', 'LBL:IN+']
+         -> R8.2(~)
+  pin7 A0           @(118.11, 111.76) tags=['PWR:GND']
+  pin8 ALERT        @(148.59, 119.38) tags=[]
+
+=== U7 ===
+  pin1 VS           @(176.53, 35.56) tags=['J', 'PWR:+5V']
+  pin2 IN           @(176.53, 33.02) tags=[]
+  pin3 NC           @(176.53, 30.48) tags=[]
+  pin4 GND          @(176.53, 27.94) tags=[]
+  pin5 GND          @(195.58, 27.94) tags=[]
+  pin6 OUT          @(195.58, 30.48) tags=[]
+  pin7 OUT          @(195.58, 33.02) tags=[]
+  pin8 VS           @(195.58, 35.56) tags=['J', 'PWR:+5V']
