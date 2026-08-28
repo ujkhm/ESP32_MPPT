@@ -1,2 +1,6 @@
 pyserial>=3.5
 matplotlib>=3.8
+# 藍牙裝置掃描/配對用(Windows Runtime 投影)。目前(2026-08)在 Python 3.13 上沒有現成的
+# 二進位輪子，需要先裝好 Visual Studio Build Tools(含「使用 C++ 的傳統桌面開發」工作負載)
+# 才能從原始碼建置。若安裝失敗，程式仍可執行，只是「配對裝置」畫面會退化成手動選 COM 埠。
+winsdk>=1.0.0b10

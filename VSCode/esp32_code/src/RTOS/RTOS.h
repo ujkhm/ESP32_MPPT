@@ -17,5 +17,10 @@
 
 //Core 1
 #define RTOS_UI_LEVEL 8 // OLED：顯示，優先權高於 Arduino loop()(預設 1)
+// 量測序列總管(安全電流/內阻/曲線)：只做狀態機、週期性讀值與 GPIO 切換，
+// 時間尺度都是幾百 ms 到幾分鐘等級，刻意放低優先權、放 Core1，
+// 不與 Core0 的 PID/測速即時控制路徑搶執行時間。
+#define RTOS_MEASURE_SEQ_LEVEL 3
+#define RTOS_BT_TELEMETRY_LEVEL 2 // 藍牙序列遙測：純推播 JSON，優先權更低
 
 //不指定執行核心

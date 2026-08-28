@@ -5,6 +5,13 @@
 #include "motor_PID/motor_PID.h"
 #include "ina232/ina232.h"
 #include "board_ui/board_ui.h"
+#include "measure_seq/measure_seq.h"
+#include "bt_telemetry/bt_telemetry.h"
+
+// ★記憶體保護★：main.cpp 是純粹的「協調 + 顯示」層，對所有共享狀態的存取
+// 一律透過 settings.h 提供的介面(speed_get/set_x、pid_get/set_x、ina_get_x、
+// ui_get/set_x)；一次要更新好幾個彼此相關欄位(例如 trigger_estop)時，
+// 用 SettingsLockGuard 包住整段直接寫欄位，確保其他任務不會讀到只更新一半的狀態。
 
 static constexpr uint32_t SERIAL_DEBUG_MS = 250;
 static constexpr uint32_t SERIAL_RPM_MS = 1000;
@@ -21,6 +28,8 @@ static bool last_tune_active = false;
 static bool last_tune_done = false;
 static bool last_speed_stable = false;
 static uint8_t last_ui_state = 0xFF;
+static uint8_t last_meas_phase = 0xFF;
+static bool last_link_lost = false;
 
 // ---- START 鈕(SW2 → IO15，對 GND；板端無外接上拉) ----
 static volatile bool start_irq_pending = false;
@@ -65,34 +74,52 @@ static void start_pin_init()
 
 static void trigger_estop()
 {
-  settings.fault = true;
-  settings.fault_code = FAULT_ESTOP;
-  settings.const_speed_ready = false;
-  settings.ol_hold = false;
-  settings.ol_probe_request = false;
-  settings.ol_probe_ready = false;
-  settings.init_phase = SPEED_PHASE_FAULT;
-  settings.speed_valid = false;
-  settings.speed_stable = false;
-  settings.ol_pwm_cmd = 0;
-  PID_settings.autotune_active = false;
+  // 這組欄位代表「已急停」的完整事實，整段上鎖一起寫入
+  {
+    SettingsLockGuard lock(g_speed_mux);
+    settings.fault = true;
+    settings.fault_code = FAULT_ESTOP;
+    settings.const_speed_ready = false;
+    settings.ol_hold = false;
+    settings.ol_probe_request = false;
+    settings.ol_probe_ready = false;
+    settings.init_phase = SPEED_PHASE_FAULT;
+    settings.speed_valid = false;
+    settings.speed_stable = false;
+    settings.ol_pwm_cmd = 0;
+  }
+  pid_set_autotune_active(false);
   ledcWrite(MOTOR_PWM_PIN, 0);
 
-  ui_settings.state = UI_ESTOP;
+  ui_set_state(UI_ESTOP);
   Serial.println("[MAIN] ESTOP locked — reboot required");
 }
 
 static void start_motor_control()
 {
-  if (ui_settings.motor_started)
+  if (ui_get_motor_started())
   {
     return;
   }
   motor_PID_start();
   speed_sensor_start();
-  ui_settings.motor_started = true;
-  ui_settings.state = UI_RUNNING;
-  Serial.println("[MAIN] START → motor_PID + speed_sensor started");
+  measure_seq_start(); // 等自動調參後定速穩定，依序驅動安全電流→內阻→曲線計算
+  // 這 2 個欄位代表「已啟動」的同一件事，整段上鎖一起寫入
+  {
+    SettingsLockGuard lock(g_ui_mux);
+    ui_settings.motor_started = true;
+    ui_settings.state = UI_RUNNING;
+  }
+  Serial.println("[MAIN] START → motor_PID + speed_sensor + measure_seq started");
+}
+
+// 發電機斷線暫停中再按 START：請 measure_seq 嘗試恢復目前模組(整段重新開始，見 measure_seq.cpp)。
+// 只負責「轉達使用者意圖」與樂觀更新 UI，實際的恢復時序(等 speed_stable 等)由 measure_seq 自行把關。
+static void resume_after_link_loss()
+{
+  meas_set_resume_requested(true);
+  ui_set_state(UI_RUNNING);
+  Serial.println("[MAIN] START → resume requested after generator link loss");
 }
 
 // 去彈跳後偵測按下邊緣；ISR 旗標加速喚醒，仍以穩定電平為準
@@ -131,15 +158,20 @@ static void handle_start_button(uint32_t now_ms)
   }
   start_last_accept_ms = now_ms;
 
-  Serial.printf("[MAIN] START edge accepted, state=%u\n", (unsigned)ui_settings.state);
+  const uint8_t cur_state = ui_get_state();
+  Serial.printf("[MAIN] START edge accepted, state=%u\n", (unsigned)cur_state);
 
-  if (ui_settings.state == UI_WAIT_START)
+  if (cur_state == UI_WAIT_START)
   {
     start_motor_control();
   }
-  else if (ui_settings.state == UI_RUNNING)
+  else if (cur_state == UI_RUNNING)
   {
     trigger_estop();
+  }
+  else if (cur_state == UI_LINK_LOST)
+  {
+    resume_after_link_loss();
   }
 }
 
@@ -161,6 +193,8 @@ static const char *phase_name(uint8_t phase)
     return "PID_TUNE";
   case SPEED_PHASE_PID_RUN:
     return "PID_RUN";
+  case SPEED_PHASE_PID_PAUSED:
+    return "PID_PAUSED";
   default:
     return "UNKNOWN";
   }
@@ -182,6 +216,8 @@ static const char *fault_name(uint8_t code)
     return "AUTOTUNE_FAIL";
   case FAULT_ESTOP:
     return "ESTOP";
+  case FAULT_MEASURE_SAFETY:
+    return "MEASURE_SAFETY";
   default:
     return "UNKNOWN";
   }
@@ -197,6 +233,31 @@ static const char *ui_state_name(uint8_t st)
     return "RUNNING";
   case UI_ESTOP:
     return "ESTOP";
+  case UI_LINK_LOST:
+    return "LINK_LOST";
+  default:
+    return "UNKNOWN";
+  }
+}
+
+static const char *meas_phase_name(uint8_t ph)
+{
+  switch (ph)
+  {
+  case MEAS_IDLE:
+    return "IDLE";
+  case MEAS_MIN_SPEED_HOLD:
+    return "MIN_SPEED_HOLD";
+  case MEAS_SAFE_CURRENT:
+    return "SAFE_CURRENT";
+  case MEAS_RESISTANCE:
+    return "RESISTANCE";
+  case MEAS_CURVE_CALC:
+    return "CURVE_CALC";
+  case MEAS_DONE:
+    return "DONE";
+  case MEAS_LINK_LOST:
+    return "LINK_LOST";
   default:
     return "UNKNOWN";
   }
@@ -204,17 +265,18 @@ static const char *ui_state_name(uint8_t st)
 
 static void serial_print_events()
 {
-  const uint8_t phase = settings.init_phase;
-  const uint8_t fcode = settings.fault_code;
-  const bool hold = settings.ol_hold;
-  const bool ready = settings.const_speed_ready;
-  const bool probe_rdy = settings.ol_probe_ready;
+  const uint8_t phase = speed_get_init_phase();
+  const uint8_t fcode = speed_get_fault_code();
+  const bool hold = speed_get_ol_hold();
+  const bool ready = speed_get_const_speed_ready();
+  const bool probe_rdy = speed_get_ol_probe_ready();
+  const uint8_t ui_state_now = ui_get_state();
 
-  if (ui_settings.state != last_ui_state)
+  if (ui_state_now != last_ui_state)
   {
     Serial.printf("[EVT] ui %s -> %s\n",
-                  ui_state_name(last_ui_state), ui_state_name(ui_settings.state));
-    last_ui_state = ui_settings.state;
+                  ui_state_name(last_ui_state), ui_state_name(ui_state_now));
+    last_ui_state = ui_state_now;
   }
   if (phase != last_phase)
   {
@@ -226,8 +288,8 @@ static void serial_print_events()
   {
     Serial.printf("[EVT] ol_hold %d -> %d (pwm=%u probe_rpm=%.1f)\n",
                   (int)last_ol_hold, (int)hold,
-                  (unsigned)settings.ol_pwm_cmd,
-                  (double)settings.ol_probe_rpm);
+                  (unsigned)speed_get_ol_pwm_cmd(),
+                  (double)speed_get_ol_probe_rpm());
     last_ol_hold = hold;
   }
   if (probe_rdy != last_probe_ready)
@@ -235,7 +297,7 @@ static void serial_print_events()
     if (probe_rdy)
     {
       Serial.printf("[EVT] probe latched rpm=%.1f (need>=%.1f)\n",
-                    (double)settings.ol_probe_rpm,
+                    (double)speed_get_ol_probe_rpm(),
                     (double)(RPM_INIT_READABLE + RPM_INIT_MARGIN));
     }
     last_probe_ready = probe_rdy;
@@ -246,41 +308,58 @@ static void serial_print_events()
                   (int)last_ready, (int)ready);
     last_ready = ready;
   }
-  if (PID_settings.autotune_active != last_tune_active)
+  const bool tune_active_now = pid_get_autotune_active();
+  if (tune_active_now != last_tune_active)
   {
     Serial.printf("[EVT] autotune_active %d -> %d\n",
-                  (int)last_tune_active, (int)PID_settings.autotune_active);
-    last_tune_active = PID_settings.autotune_active;
+                  (int)last_tune_active, (int)tune_active_now);
+    last_tune_active = tune_active_now;
   }
-  if (PID_settings.autotune_done != last_tune_done)
+  const bool tune_done_now = pid_get_autotune_done();
+  if (tune_done_now != last_tune_done)
   {
     Serial.printf("[EVT] autotune_done %d -> %d (Kp=%.5f Ki=%.5f Kd=%.5f)\n",
-                  (int)last_tune_done, (int)PID_settings.autotune_done,
-                  (double)PID_settings.Kp, (double)PID_settings.Ki,
-                  (double)PID_settings.Kd);
-    last_tune_done = PID_settings.autotune_done;
+                  (int)last_tune_done, (int)tune_done_now,
+                  (double)pid_get_Kp(), (double)pid_get_Ki(),
+                  (double)pid_get_Kd());
+    last_tune_done = tune_done_now;
   }
-  if (settings.speed_stable != last_speed_stable)
+  const bool speed_stable_now = speed_get_speed_stable();
+  if (speed_stable_now != last_speed_stable)
   {
     Serial.printf("[EVT] speed_stable %d -> %d (rpm=%.1f keep=%.1f)\n",
-                  (int)last_speed_stable, (int)settings.speed_stable,
-                  (double)settings.now_speed, (double)PID_settings.keep_rpm);
-    last_speed_stable = settings.speed_stable;
+                  (int)last_speed_stable, (int)speed_stable_now,
+                  (double)speed_get_now_speed(), (double)pid_get_keep_rpm());
+    last_speed_stable = speed_stable_now;
   }
   if (fcode != last_fault_code)
   {
-    if (settings.fault)
+    if (speed_get_fault())
     {
       Serial.printf("[EVT] FAULT code=%u (%s) rpm=%.1f pwm=%u\n",
                     (unsigned)fcode, fault_name(fcode),
-                    (double)settings.now_speed,
-                    (unsigned)settings.ol_pwm_cmd);
+                    (double)speed_get_now_speed(),
+                    (unsigned)speed_get_ol_pwm_cmd());
     }
     else if (last_fault_code != 0xFF)
     {
       Serial.printf("[EVT] fault cleared\n");
     }
     last_fault_code = fcode;
+  }
+
+  const uint8_t meas_phase_now = meas_get_phase();
+  if (meas_phase_now != last_meas_phase)
+  {
+    Serial.printf("[EVT] measure_seq %s -> %s\n",
+                  meas_phase_name(last_meas_phase), meas_phase_name(meas_phase_now));
+    last_meas_phase = meas_phase_now;
+  }
+  const bool link_lost_now = meas_get_link_lost();
+  if (link_lost_now != last_link_lost)
+  {
+    Serial.printf("[EVT] gen link_lost %d -> %d\n", (int)last_link_lost, (int)link_lost_now);
+    last_link_lost = link_lost_now;
   }
 }
 
@@ -293,38 +372,38 @@ static void serial_print_debug_status()
       "keep=%.1f tune=%d/%d tunedNVS=%d Kp=%.4f Ki=%.4f Kd=%.4f "
       "V=%.2f I=%.3f P=%.2f ina=%d/%d n=%lu\n",
       (unsigned long)millis(),
-      ui_state_name(ui_settings.state),
+      ui_state_name(ui_get_state()),
       digitalRead(START_PIN),
       (int)start_raw_pressed(),
-      phase_name(settings.init_phase),
-      (double)settings.now_speed,
-      (int)settings.speed_valid,
-      (unsigned)settings.ol_pwm_cmd,
-      (int)settings.ol_hold,
-      (int)settings.ol_probe_request,
-      (int)settings.ol_probe_ready,
-      (double)settings.ol_probe_rpm,
-      (unsigned)settings.settle_samples,
+      phase_name(speed_get_init_phase()),
+      (double)speed_get_now_speed(),
+      (int)speed_get_speed_valid(),
+      (unsigned)speed_get_ol_pwm_cmd(),
+      (int)speed_get_ol_hold(),
+      (int)speed_get_ol_probe_request(),
+      (int)speed_get_ol_probe_ready(),
+      (double)speed_get_ol_probe_rpm(),
+      (unsigned)speed_get_settle_samples(),
       (unsigned)READY_SETTLE_MIN_SAMPLES,
-      (int)settings.const_speed_ready,
-      (int)settings.rpm_stable,
-      (int)settings.speed_stable,
-      (int)settings.fault,
-      fault_name(settings.fault_code),
-      (unsigned long)settings.edge_count,
-      (double)PID_settings.keep_rpm,
-      (int)PID_settings.autotune_active,
-      (int)PID_settings.autotune_done,
-      (int)PID_settings.tuned,
-      (double)PID_settings.Kp,
-      (double)PID_settings.Ki,
-      (double)PID_settings.Kd,
-      (double)ina_settings.bus_V,
-      (double)ina_settings.current_A,
-      (double)ina_settings.power_W,
-      (int)ina_settings.online,
-      (int)ina_settings.data_valid,
-      (unsigned long)ina_settings.sample_count);
+      (int)speed_get_const_speed_ready(),
+      (int)speed_get_rpm_stable(),
+      (int)speed_get_speed_stable(),
+      (int)speed_get_fault(),
+      fault_name(speed_get_fault_code()),
+      (unsigned long)speed_get_edge_count(),
+      (double)pid_get_keep_rpm(),
+      (int)pid_get_autotune_active(),
+      (int)pid_get_autotune_done(),
+      (int)pid_get_tuned(),
+      (double)pid_get_Kp(),
+      (double)pid_get_Ki(),
+      (double)pid_get_Kd(),
+      (double)ina_get_bus_V(),
+      (double)ina_get_current_A(),
+      (double)ina_get_power_W(),
+      (int)ina_get_online(),
+      (int)ina_get_data_valid(),
+      (unsigned long)ina_get_sample_count());
 }
 
 void setup()
@@ -369,7 +448,8 @@ void setup()
   board_ui_oled_init();
   board_ui_start();
   ina232_start();
-  Serial.println("[BOOT] tasks started (board_ui display + ina232)");
+  bt_telemetry_start();
+  Serial.println("[BOOT] tasks started (board_ui display + ina232 + bt_telemetry)");
 }
 
 void loop()
@@ -380,9 +460,15 @@ void loop()
   handle_start_button(now);
 
   // 其他模組 fault → UI 跟著進急停畫面
-  if ((ui_settings.state == UI_RUNNING) && settings.fault)
+  if ((ui_get_state() == UI_RUNNING) && speed_get_fault())
   {
-    ui_settings.state = UI_ESTOP;
+    ui_set_state(UI_ESTOP);
+  }
+
+  // 量測序列偵測到發電機斷線 → UI 進入(非故障的)暫停畫面，重按 START 才會續測
+  if ((ui_get_state() == UI_RUNNING) && meas_get_link_lost())
+  {
+    ui_set_state(UI_LINK_LOST);
   }
 
   serial_print_events();
@@ -395,7 +481,7 @@ void loop()
 
   if (now - Serial_rpm_time >= SERIAL_RPM_MS)
   {
-    Serial.println(settings.now_speed);
+    Serial.println(speed_get_now_speed());
     Serial_rpm_time = now;
   }
 

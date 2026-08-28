@@ -28,6 +28,11 @@ static float ema_I = 0.0f;
 static float ema_P = 0.0f;
 static bool ema_inited = false;
 
+// ★記憶體保護★：本檔案是 ina_settings 的唯一寫入者，對外發布一律透過
+// settings.h 提供的 ina_get_x()/ina_set_x()/ina_increment_sample_count() 介面，
+// 一次要發布好幾個彼此相關欄位(一次成功讀值的 V/I/P/shunt/data_valid)時，
+// 用 SettingsLockGuard 包住整段直接寫欄位，確保其他任務讀到的是同一次讀值的結果。
+
 static bool ina_write16(uint8_t reg, uint16_t value)
 {
     return ina_bus.writeReg16(ina_addr, reg, value);
@@ -129,12 +134,17 @@ static bool ina_sample_once()
         ema_P += a * (power_W - ema_P);
     }
 
-    ina_settings.shunt_mV = shunt_mV;
-    ina_settings.bus_V = ema_V;
-    ina_settings.current_A = ema_I;
-    ina_settings.power_W = ema_P;
-    ina_settings.data_valid = true;
-    ina_settings.sample_count = ina_settings.sample_count + 1;
+    // 這組欄位代表「這一次成功讀值」的完整結果，整段上鎖一起發布，
+    // 避免其他任務(board_ui/main)讀到「新電壓配舊電流」這種不存在的組合
+    {
+        SettingsLockGuard lock(g_ina_mux);
+        ina_settings.shunt_mV = shunt_mV;
+        ina_settings.bus_V = ema_V;
+        ina_settings.current_A = ema_I;
+        ina_settings.power_W = ema_P;
+        ina_settings.data_valid = true;
+    }
+    ina_increment_sample_count();
     return true;
 }
 
@@ -174,7 +184,7 @@ static void ina232_task(void *pvParameters)
         }
     }
 
-    ina_settings.online = ok;
+    ina_set_online(ok);
     if (!ok)
     {
         while (1)
@@ -184,7 +194,7 @@ static void ina232_task(void *pvParameters)
             if (ina_probe_at(INA232_I2C_ADDR) || ina_probe_at(0x41) ||
                 ina_probe_at(0x42) || ina_probe_at(0x43))
             {
-                ina_settings.online = true;
+                ina_set_online(true);
                 Serial.printf("[INA] recovered addr=0x%02X\n", (unsigned)ina_addr);
                 break;
             }
@@ -198,14 +208,14 @@ static void ina232_task(void *pvParameters)
     while (!ina_configure())
     {
         Serial.println("[INA] configure failed, retry...");
-        ina_settings.online = false;
+        ina_set_online(false);
         vTaskDelay(pdMS_TO_TICKS(1000));
         ina_bus.begin(SDA2_PIN, SCL2_PIN, (uint32_t)I2C_INA_FREQ_HZ);
         if (!ina_probe_at(ina_addr))
         {
             continue;
         }
-        ina_settings.online = true;
+        ina_set_online(true);
     }
 
     uint32_t fail_streak = 0;
@@ -215,14 +225,14 @@ static void ina232_task(void *pvParameters)
         if (ina_sample_once())
         {
             fail_streak = 0;
-            ina_settings.online = true;
+            ina_set_online(true);
         }
         else
         {
             fail_streak++;
             if (fail_streak == 50u)
             {
-                ina_settings.online = false;
+                ina_set_online(false);
                 Serial.println("[INA] read fail streak");
             }
             if ((fail_streak % 100u) == 0u)
@@ -232,11 +242,11 @@ static void ina232_task(void *pvParameters)
                 {
                     fail_streak = 0;
                     ema_inited = false;
-                    ina_settings.online = true;
+                    ina_set_online(true);
                     Serial.println("[INA] reconfigure ok");
                 }
             }
-            if (!ina_settings.online)
+            if (!ina_get_online())
             {
                 vTaskDelay(pdMS_TO_TICKS(200));
                 continue;

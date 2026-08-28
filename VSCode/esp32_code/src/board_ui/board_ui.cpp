@@ -85,6 +85,27 @@ static const char *phase_label(uint8_t phase)
         return "TUNE";
     case SPEED_PHASE_PID_RUN:
         return "RUN";
+    case SPEED_PHASE_PID_PAUSED:
+        return "PAUSE";
+    default:
+        return "?";
+    }
+}
+
+static const char *meas_phase_label(uint8_t ph)
+{
+    switch (ph)
+    {
+    case MEAS_MIN_SPEED_HOLD:
+        return "MIN_SPD";
+    case MEAS_SAFE_CURRENT:
+        return "SAFE_I";
+    case MEAS_RESISTANCE:
+        return "RES";
+    case MEAS_CURVE_CALC:
+        return "CURVE";
+    case MEAS_DONE:
+        return "DONE";
     default:
         return "?";
     }
@@ -99,6 +120,9 @@ static void draw_wait_start()
     u8g2->sendBuffer();
 }
 
+// ★記憶體保護★：本檔案只「讀」其他模組的共享狀態拿去畫面顯示，
+// 一律透過 settings.h 提供的 speed_get_x()/pid_get_x()/ina_get_x() 介面存取，
+// 不直接碰 settings/PID_settings/ina_settings 的欄位。
 static void draw_running()
 {
     char line[32];
@@ -106,30 +130,37 @@ static void draw_running()
     u8g2->clearBuffer();
     u8g2->setFont(u8g2_font_6x12_tf);
 
-    if (settings.fault)
+    const uint8_t mphase = meas_get_phase();
+    if (speed_get_fault())
     {
         snprintf(line, sizeof(line), "STAT FAULT#%u",
-                 (unsigned)settings.fault_code);
+                 (unsigned)speed_get_fault_code());
+    }
+    else if (mphase == MEAS_SAFE_CURRENT || mphase == MEAS_RESISTANCE ||
+             mphase == MEAS_CURVE_CALC || mphase == MEAS_DONE)
+    {
+        // 量測序列已進入具名階段後，顯示這個比底層測速/PID 階段更有意義
+        snprintf(line, sizeof(line), "STAT %s", meas_phase_label(mphase));
     }
     else
     {
         snprintf(line, sizeof(line), "STAT %s%s",
-                 phase_label(settings.init_phase),
-                 settings.speed_stable ? " OK" : "");
+                 phase_label(speed_get_init_phase()),
+                 speed_get_speed_stable() ? " OK" : "");
     }
     u8g2->drawStr(0, 10, line);
 
     snprintf(line, sizeof(line), "RPM  %.0f/%.0f",
-             (double)settings.now_speed, (double)PID_settings.keep_rpm);
+             (double)speed_get_now_speed(), (double)pid_get_keep_rpm());
     u8g2->drawStr(0, 22, line);
 
-    if (ina_settings.online && ina_settings.data_valid)
+    if (ina_get_online() && ina_get_data_valid())
     {
-        snprintf(line, sizeof(line), "I    %.3f A", (double)ina_settings.current_A);
+        snprintf(line, sizeof(line), "I    %.3f A", (double)ina_get_current_A());
         u8g2->drawStr(0, 34, line);
-        snprintf(line, sizeof(line), "V    %.2f V", (double)ina_settings.bus_V);
+        snprintf(line, sizeof(line), "V    %.2f V", (double)ina_get_bus_V());
         u8g2->drawStr(0, 46, line);
-        snprintf(line, sizeof(line), "P    %.2f W", (double)ina_settings.power_W);
+        snprintf(line, sizeof(line), "P    %.2f W", (double)ina_get_power_W());
         u8g2->drawStr(0, 58, line);
     }
     else
@@ -151,9 +182,23 @@ static void draw_estop()
     u8g2->sendBuffer();
 }
 
+// 發電機斷線暫停：非故障，不需重開機，畫面刻意與 ESTOP 不同，明確告訴使用者下一步該做什麼
+static void draw_link_lost()
+{
+    char line[32];
+    u8g2->clearBuffer();
+    u8g2->setFont(u8g2_font_6x12_tf);
+    u8g2->drawStr(0, 12, "GEN DISCONNECTED");
+    u8g2->drawStr(0, 26, "Check leads (clips)");
+    snprintf(line, sizeof(line), "was: %s", meas_phase_label(meas_get_resume_phase()));
+    u8g2->drawStr(0, 40, line);
+    u8g2->drawStr(0, 56, "Press START to retry");
+    u8g2->sendBuffer();
+}
+
 static void draw_frame()
 {
-    switch (ui_settings.state)
+    switch (ui_get_state())
     {
     case UI_WAIT_START:
         draw_wait_start();
@@ -163,6 +208,9 @@ static void draw_frame()
         break;
     case UI_ESTOP:
         draw_estop();
+        break;
+    case UI_LINK_LOST:
+        draw_link_lost();
         break;
     default:
         break;
@@ -193,7 +241,7 @@ bool board_ui_oled_init()
     if (addr == 0xFF)
     {
         Serial.println("[UI] OLED no ACK — check VCC/GND/wiring");
-        ui_settings.oled_ok = false;
+        ui_set_oled_ok(false);
         return false;
     }
     Serial.printf("[UI] OLED ACK addr=0x%02X\n", (unsigned)addr);
@@ -205,7 +253,7 @@ bool board_ui_oled_init()
     u8g2->setI2CAddress(addr << 1);
     if (!u8g2->begin())
     {
-        ui_settings.oled_ok = false;
+        ui_set_oled_ok(false);
         Serial.println("[UI] OLED begin failed (forced SH1106)");
         return false;
     }
@@ -217,7 +265,7 @@ bool board_ui_oled_init()
     u8g2->setI2CAddress(addr << 1);
     if (!u8g2->begin())
     {
-        ui_settings.oled_ok = false;
+        ui_set_oled_ok(false);
         Serial.println("[UI] OLED begin failed (forced SSD1306)");
         return false;
     }
@@ -237,7 +285,7 @@ bool board_ui_oled_init()
         u8g2->setI2CAddress(addr << 1);
         if (!u8g2->begin())
         {
-            ui_settings.oled_ok = false;
+            ui_set_oled_ok(false);
             Serial.println("[UI] OLED begin failed");
             return false;
         }
@@ -251,8 +299,8 @@ bool board_ui_oled_init()
 
     u8g2->setPowerSave(0);
     u8g2->setContrast(255);
-    ui_settings.oled_ok = true;
-    ui_settings.state = UI_WAIT_START;
+    ui_set_oled_ok(true);
+    ui_set_state(UI_WAIT_START);
     draw_wait_start();
     return true;
 }
@@ -265,7 +313,7 @@ static void board_ui_task(void *pvParameters)
     while (1)
     {
         const uint32_t now = millis();
-        if (ui_settings.oled_ok &&
+        if (ui_get_oled_ok() &&
             ((now - last_draw_ms) >= (uint32_t)UI_REFRESH_MS))
         {
             last_draw_ms = now;

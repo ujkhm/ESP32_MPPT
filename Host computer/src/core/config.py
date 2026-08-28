@@ -22,6 +22,17 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "refresh_ms": 200,
         "chart_max_points": 300,
     },
+    # 上次成功配對/連上的藍牙裝置，用於下次開啟時自動重連(跳過第一/二步)
+    "bluetooth": {
+        "last_device_name": "",
+        "last_device_id": "",  # WinRT DeviceInformation.id，配對用
+        "last_device_mac": "",  # 12 碼十六進位 MAC，重連時用來重新找 COM 埠
+        "last_com_port": "",  # 實際用來開序列埠的 COM 埠
+    },
+    # 使用者上次選擇的報表儲存資料夾，重新開啟時預設帶入
+    "report": {
+        "default_save_dir": "",
+    },
 }
 
 

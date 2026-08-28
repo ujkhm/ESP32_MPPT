@@ -10,6 +10,10 @@ static float pid_output;          // 輸出到驅動主動力馬達PWM的定時�
 static float pid_input_bridge;    // 輸入到PID模組的(RPM)
 static float pid_setpoint_bridge; // 要維持的值(RPM)
 // PWM最大值限制
+// ★注意：這裡是 C++ 全域變數的靜態初始化，發生在 setup()/所有 RTOS 任務啟動之前，
+// 當下只有目前這個執行緒在跑、不會有人同時寫入 PID_settings，故直接讀欄位即可，
+// 刻意不透過 pid_get_pwm_res()：跨編譯單元(settings.cpp)的鎖初始化順序沒有保證
+// 一定早於這裡執行，為了不要引入不必要的「靜態初始化順序」風險，這一行維持原樣。
 float max_pwm_value = (float)((1 << PID_settings.pwm_res) - 1);
 
 // 階梯開環狀態
@@ -39,32 +43,41 @@ static uint16_t last_final_pwm = 0;
 static uint8_t speed_stable_hits = 0;
 static float last_keep_rpm_seen = -1.0f;
 
+// ★記憶體保護★：本檔案對 settings/PID_settings 的存取一律透過 settings.h 提供的
+// 介面——單一欄位讀寫用 speed_get_x()/set_x()、pid_get_x()/set_x()；需要「一次原子
+// 讀寫好幾個相關欄位」的狀態轉換(例如 trip_fault、調參結果落地)則用 SettingsLockGuard
+// 包住整段直接存取欄位。務必注意：settings 用 g_speed_mux、PID_settings 用 g_pid_mux，
+// 兩個不同的鎖，程式中任何地方都不會巢狀同時持有兩者，避免交叉鎖死的風險。
+
 // 強制清除對外穩調旗標(初始化/故障/換目標/未就緒時呼叫)
 static void clear_speed_stable()
 {
-    settings.speed_stable = false;
+    speed_set_speed_stable(false);
     speed_stable_hits = 0;
 }
 
 // 僅在 PID 閉環正常運行時更新 speed_stable
 static void update_speed_stable()
 {
+    const float keep_rpm_now = pid_get_keep_rpm();
+    const float now_speed = speed_get_now_speed();
+
     // 換目標：立刻視為未穩，重新計數
-    if (fabsf(PID_settings.keep_rpm - last_keep_rpm_seen) > 0.5f)
+    if (fabsf(keep_rpm_now - last_keep_rpm_seen) > 0.5f)
     {
-        last_keep_rpm_seen = PID_settings.keep_rpm;
+        last_keep_rpm_seen = keep_rpm_now;
         clear_speed_stable();
     }
 
     const bool system_ok =
-        (!settings.fault) &&
-        settings.const_speed_ready &&
-        PID_settings.autotune_done &&
-        (!PID_settings.autotune_active) &&
-        (settings.init_phase == SPEED_PHASE_PID_RUN) &&
-        settings.speed_valid &&
-        (settings.now_speed >= SPEED_STABLE_MIN_RPM) &&
-        (PID_settings.keep_rpm > 1.0f);
+        (!speed_get_fault()) &&
+        speed_get_const_speed_ready() &&
+        pid_get_autotune_done() &&
+        (!pid_get_autotune_active()) &&
+        (speed_get_init_phase() == SPEED_PHASE_PID_RUN) &&
+        speed_get_speed_valid() &&
+        (now_speed >= SPEED_STABLE_MIN_RPM) &&
+        (keep_rpm_now > 1.0f);
 
     if (!system_ok)
     {
@@ -72,11 +85,13 @@ static void update_speed_stable()
         return;
     }
 
-    const float err = fabsf(settings.now_speed - PID_settings.keep_rpm);
-    const float ref = fmaxf(settings.now_speed, PID_settings.keep_rpm);
+    const float err = fabsf(now_speed - keep_rpm_now);
+    const float ref = fmaxf(now_speed, keep_rpm_now);
+    const float abs_eps = (float)SPEED_STABLE_ABS_EPS +
+                          keep_rpm_now * ((float)SPEED_STABLE_ABS_EPS_PER_1000RPM / 1000.0f);
     const bool near_target =
-        (err <= SPEED_STABLE_ABS_EPS) ||
-        ((ref > 1.0f) && ((err / ref) <= SPEED_STABLE_REL_EPS));
+        (err <= abs_eps) ||
+        ((ref > 1.0f) && ((err / ref) <= (float)SPEED_STABLE_REL_EPS));
 
     if (near_target)
     {
@@ -86,7 +101,7 @@ static void update_speed_stable()
         }
         if (speed_stable_hits >= SPEED_STABLE_NEED_HITS)
         {
-            settings.speed_stable = true;
+            speed_set_speed_stable(true);
         }
     }
     else
@@ -99,17 +114,21 @@ static void update_speed_stable()
 // 觸發失控保護：切斷輸出並鎖定故障碼
 static void trip_fault(uint8_t code)
 {
-    settings.fault = true;
-    settings.fault_code = code;
-    settings.const_speed_ready = false;
-    settings.ol_hold = false;
-    settings.ol_probe_request = false;
-    settings.ol_probe_ready = false;
-    settings.init_phase = SPEED_PHASE_FAULT;
-    PID_settings.autotune_active = false;
+    // settings 這組欄位代表「已故障」這單一事實的好幾個面向，整段上鎖一起寫入
+    {
+        SettingsLockGuard lock(g_speed_mux);
+        settings.fault = true;
+        settings.fault_code = code;
+        settings.const_speed_ready = false;
+        settings.ol_hold = false;
+        settings.ol_probe_request = false;
+        settings.ol_probe_ready = false;
+        settings.init_phase = SPEED_PHASE_FAULT;
+        settings.ol_pwm_cmd = 0;
+    }
+    pid_set_autotune_active(false);
     clear_speed_stable();
     step_pwm = 0;
-    settings.ol_pwm_cmd = 0;
     pid_output = 0.0f;
     last_final_pwm = 0;
     tune_ready_seen = false;
@@ -129,10 +148,13 @@ static void open_loop_step_control(uint32_t now_ms)
     const float need_rpm = RPM_INIT_READABLE + RPM_INIT_MARGIN;
 
     // 已達可讀門檻：固定當前 PWM，不再升階
-    if (settings.ol_hold)
+    if (speed_get_ol_hold())
     {
-        settings.ol_pwm_cmd = step_pwm;
-        settings.ol_probe_request = false;
+        {
+            SettingsLockGuard lock(g_speed_mux);
+            settings.ol_pwm_cmd = step_pwm;
+            settings.ol_probe_request = false;
+        }
         pid_output = (float)step_pwm;
         ledcWrite(MOTOR_PWM_PIN, step_pwm);
         return;
@@ -146,57 +168,63 @@ static void open_loop_step_control(uint32_t now_ms)
         {
             step_pwm = pwm_max;
         }
-        settings.ol_pwm_cmd = step_pwm;
-        settings.ol_probe_request = false;
-        settings.ol_probe_ready = false;
-        settings.ol_probe_rpm = 0.0f;
+        {
+            SettingsLockGuard lock(g_speed_mux);
+            settings.ol_pwm_cmd = step_pwm;
+            settings.ol_probe_request = false;
+            settings.ol_probe_ready = false;
+            settings.ol_probe_rpm = 0.0f;
+            settings.init_phase = SPEED_PHASE_STEP_UP;
+        }
         settle_start_ms = now_ms;
         settling = true;
         step_applied = true;
-        settings.init_phase = SPEED_PHASE_STEP_UP;
         pid_output = (float)step_pwm;
         ledcWrite(MOTOR_PWM_PIN, step_pwm);
         return;
     }
 
     // 輸出目前階梯 duty
-    settings.ol_pwm_cmd = step_pwm;
+    speed_set_ol_pwm_cmd(step_pwm);
     pid_output = (float)step_pwm;
     ledcWrite(MOTOR_PWM_PIN, step_pwm);
 
     if (settling)
     {
-        settings.init_phase = SPEED_PHASE_STEP_UP;
+        speed_set_init_phase(SPEED_PHASE_STEP_UP);
         if ((now_ms - settle_start_ms) < (uint32_t)MOTOR_STEP_SETTLE_MS)
         {
             // 仍在等待速度穩定：不請求 probe，避免用到升階瞬間的髒資料
+            SettingsLockGuard lock(g_speed_mux);
             settings.ol_probe_request = false;
             settings.ol_probe_ready = false;
             return;
         }
 
         // settle 結束：請 speed_sensor 擷取「之後第一筆可用」同位置轉速
-        settings.init_phase = SPEED_PHASE_PROBE;
-        settings.ol_probe_request = true;
+        speed_set_init_phase(SPEED_PHASE_PROBE);
+        speed_set_ol_probe_request(true);
 
         const bool probe_timeout =
             ((now_ms - settle_start_ms) >=
              ((uint32_t)MOTOR_STEP_SETTLE_MS + (uint32_t)MOTOR_PROBE_TIMEOUT_MS));
 
-        if (!settings.ol_probe_ready && !probe_timeout)
+        const bool probe_ready_now = speed_get_ol_probe_ready();
+        if (!probe_ready_now && !probe_timeout)
         {
             // 尚無可用資料：繼續等
             return;
         }
 
         // 已拿到 probe，或逾時視為本階轉速不足(0)
-        const float probe_rpm = settings.ol_probe_ready ? settings.ol_probe_rpm : 0.0f;
-        settings.ol_probe_request = false;
+        const float probe_rpm = probe_ready_now ? speed_get_ol_probe_rpm() : 0.0f;
+        speed_set_ol_probe_request(false);
         settling = false;
 
         if (probe_rpm >= need_rpm)
         {
             // 轉速已夠：停在此 PWM，交給測速模組做就緒觀察(穩定確認)
+            SettingsLockGuard lock(g_speed_mux);
             settings.ol_hold = true;
             settings.rpm_stable = true;
             settings.init_phase = SPEED_PHASE_LEARNING;
@@ -212,12 +240,15 @@ static void open_loop_step_control(uint32_t now_ms)
 
         const uint32_t next = (uint32_t)step_pwm + (uint32_t)pwm_step;
         step_pwm = (uint16_t)((next > pwm_max) ? pwm_max : next);
-        settings.ol_pwm_cmd = step_pwm;
-        settings.ol_probe_ready = false;
-        settings.ol_probe_rpm = 0.0f;
+        {
+            SettingsLockGuard lock(g_speed_mux);
+            settings.ol_pwm_cmd = step_pwm;
+            settings.ol_probe_ready = false;
+            settings.ol_probe_rpm = 0.0f;
+            settings.init_phase = SPEED_PHASE_STEP_UP;
+        }
         settle_start_ms = now_ms;
         settling = true;
-        settings.init_phase = SPEED_PHASE_STEP_UP;
         pid_output = (float)step_pwm;
         ledcWrite(MOTOR_PWM_PIN, step_pwm);
     }
@@ -232,7 +263,7 @@ static bool need_autotune()
 #if PID_AUTOTUNE_EVERY_BOOT
     return true;
 #else
-    return !PID_settings.tuned;
+    return !pid_get_tuned();
 #endif
 #endif
 }
@@ -241,7 +272,8 @@ static bool need_autotune()
 static void begin_autotune(sTune &tuner)
 {
     // 以目前開環 hold duty 為起點，再往上做階躍以取得 S 曲線
-    float out_start = (float)((settings.ol_pwm_cmd > 0) ? settings.ol_pwm_cmd : step_pwm);
+    const uint16_t ol_pwm_now = speed_get_ol_pwm_cmd();
+    float out_start = (float)((ol_pwm_now > 0) ? ol_pwm_now : step_pwm);
     if (out_start < 1.0f)
     {
         out_start = max_pwm_value * MOTOR_PWM_STEP_RATIO;
@@ -266,20 +298,21 @@ static void begin_autotune(sTune &tuner)
     // 目標轉速未設定時，鎖存當前轉速作為後續定速設定點
     // 呼叫端(motor_PID_init)已先等待 PID_TUNE_PRE_SETTLE_MS 讓濾波轉速收斂，
     // 此處的 now_speed 已是穩定值，不會是剛切換量測方式瞬間的雜訊尖峰
-    if (PID_settings.keep_rpm <= 1.0f && settings.now_speed > 1.0f)
+    const float now_speed_now = speed_get_now_speed();
+    if (pid_get_keep_rpm() <= 1.0f && now_speed_now > 1.0f)
     {
-        PID_settings.keep_rpm = settings.now_speed;
+        pid_set_keep_rpm(now_speed_now);
     }
 
     // 依目前實際轉速動態估計 sTune 輸入全幅，而非直接套用飛車保護的絕對上限，
     // 否則會低估製程增益、算出過度激進的 Kp(工作點離飛車上限愈遠，此差異愈明顯)
     const float input_span = fminf(RPM_RUNAWAY_MAX,
-                                    fmaxf(PID_TUNE_INPUT_SPAN_MIN, settings.now_speed * 4.0f));
+                                    fmaxf(PID_TUNE_INPUT_SPAN_MIN, now_speed_now * 4.0f));
     const float estop_rpm = RPM_RUNAWAY_MAX * PID_TUNE_ESTOP_RATIO;
 
-    pid_input_bridge = settings.now_speed;
+    pid_input_bridge = now_speed_now;
     pid_output = out_start;
-    settings.ol_pwm_cmd = (uint16_t)out_start;
+    speed_set_ol_pwm_cmd((uint16_t)out_start);
     ledcWrite(MOTOR_PWM_PIN, (uint32_t)out_start);
 
     tuner.Configure(input_span,
@@ -297,9 +330,9 @@ static void begin_autotune(sTune &tuner)
     tuner.SetSerialMode(tuner.printOFF);
 #endif
 
-    PID_settings.autotune_active = true;
-    PID_settings.autotune_done = false;
-    settings.init_phase = SPEED_PHASE_PID_TUNE;
+    pid_set_autotune_active(true);
+    pid_set_autotune_done(false);
+    speed_set_init_phase(SPEED_PHASE_PID_TUNE);
     clear_speed_stable();
     tuner_configured = true;
     tune_sample_hits = 0;
@@ -316,7 +349,7 @@ static void begin_autotune(sTune &tuner)
                   (unsigned)PID_TUNE_SETTLE_SEC, (unsigned)PID_TUNE_TEST_SEC,
                   (unsigned)PID_TUNE_SAMPLES, (double)input_span, (double)estop_rpm);
     Serial.printf("[TUNE] rpm_now=%.1f keep_rpm=%.1f rule=NoOvershoot_PI action=direct5T\n",
-                  (double)settings.now_speed, (double)PID_settings.keep_rpm);
+                  (double)now_speed_now, (double)pid_get_keep_rpm());
     Serial.println(F("[TUNE] =============================="));
 }
 
@@ -326,7 +359,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
     if (!tuner_configured)
     {
         begin_autotune(tuner);
-        if (settings.fault)
+        if (speed_get_fault())
         {
             return true;
         }
@@ -344,15 +377,17 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
         return true;
     }
 
-    pid_input_bridge = settings.now_speed;
+    pid_input_bridge = speed_get_now_speed();
     const uint8_t st = tuner.Run();
 
     // 無論 sample/test，sTune 都會更新 Output → 立刻寫出 PWM
     const uint32_t duty = (uint32_t)constrain(pid_output, 0.0f, max_pwm_value);
-    settings.ol_pwm_cmd = (uint16_t)duty;
+    speed_set_ol_pwm_cmd((uint16_t)duty);
     ledcWrite(MOTOR_PWM_PIN, duty);
 
-    if (settings.now_speed > RPM_RUNAWAY_MAX)
+    // 用本輪剛取樣、也拿去餵 sTune 的值做飛車檢查，確保兩者判斷基準一致，
+    // 同時省一次重複上鎖讀取
+    if (pid_input_bridge > RPM_RUNAWAY_MAX)
     {
         trip_fault(FAULT_RUNAWAY_RPM);
         return true;
@@ -362,7 +397,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
     {
     case sTune::sample:
         // 每個測試取樣點：輸入已在上方更新
-        settings.init_phase = SPEED_PHASE_PID_TUNE;
+        speed_set_init_phase(SPEED_PHASE_PID_TUNE);
         tune_sample_hits++;
 #if PID_TUNE_SERIAL_VERBOSE
         {
@@ -373,7 +408,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
                 // hits 含 settle 期，僅作進度參考
                 Serial.printf("[TUNE] prog hits=%lu rpm=%.1f pwm=%u target_step=%.0f->%.0f\n",
                               (unsigned long)tune_sample_hits,
-                              (double)settings.now_speed,
+                              (double)pid_input_bridge,
                               (unsigned)duty,
                               (double)tune_out_start,
                               (double)tune_out_step);
@@ -443,21 +478,33 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
 
         // 再乘上安全係數：ZN 系規則本就偏激進(1/4 衰減比)，加上測試訊號難免有
         // 非線性/雜訊誤差，保守化可降低震盪風險
-        PID_settings.Kp = kp_raw * PID_TUNE_GAIN_SCALE;
-        PID_settings.Ki = ki_raw * PID_TUNE_GAIN_SCALE;
-        PID_settings.Kd = kd_raw * PID_TUNE_GAIN_SCALE;
-        PID_settings.tuned = true;
-        PID_settings.save();
+        const float new_kp = kp_raw * PID_TUNE_GAIN_SCALE;
+        const float new_ki = ki_raw * PID_TUNE_GAIN_SCALE;
+        const float new_kd = kd_raw * PID_TUNE_GAIN_SCALE;
 
-        myPID.SetTunings(PID_settings.Kp, PID_settings.Ki, PID_settings.Kd);
+        // Kp/Ki/Kd/tuned 是「這次調參結果」的同一組數字，整段上鎖一起寫入，
+        // 避免其他任務(例如 main 的 [DBG] 列印)讀到「新 Kp 配舊 Ki」這種不存在的組合
+        {
+            SettingsLockGuard lock(g_pid_mux);
+            PID_settings.Kp = new_kp;
+            PID_settings.Ki = new_ki;
+            PID_settings.Kd = new_kd;
+            PID_settings.tuned = true;
+        }
+        PID_settings.save(); // Flash I/O 已在鎖外進行，見 settings.h 內的實作說明
+
+        myPID.SetTunings(new_kp, new_ki, new_kd);
         myPID.SetMode(myPID.Control::manual); // 先手動，下一輪再切自動接棒
         // 以當前輸出接棒，減少交接突跳；同步設定斜率限制基準避免第一輪就被硬夾
         pid_output = (float)duty;
         last_final_pwm = (uint16_t)duty;
 
-        PID_settings.autotune_active = false;
-        PID_settings.autotune_done = true;
-        settings.init_phase = SPEED_PHASE_PID_RUN;
+        {
+            SettingsLockGuard lock(g_pid_mux);
+            PID_settings.autotune_active = false;
+            PID_settings.autotune_done = true;
+        }
+        speed_set_init_phase(SPEED_PHASE_PID_RUN);
 
         Serial.println(F("[TUNE] ---------- RESULT ----------"));
         Serial.printf("[TUNE] sTune norm Kp=%.6f Ki=%.6f Kd=%.6f (無因次，未換算前)\n",
@@ -467,13 +514,13 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
                       (double)process_gain);
         Serial.printf("[TUNE] Tu=%.4fs td=%.4fs Tau/td=%.2f Ti=%.3fs loop_gain=%.2f\n",
                       (double)tau, (double)dead, (double)tau_over_dead, (double)ti_sec,
-                      (double)(PID_settings.Kp * process_gain));
+                      (double)(new_kp * process_gain));
         Serial.printf("[TUNE] real-unit Kp=%.6f Ki=%.6f Kd=%.6f (scale=%.2f)\n",
                       (double)kp_raw, (double)ki_raw, (double)kd_raw, (double)PID_TUNE_GAIN_SCALE);
         Serial.printf("[TUNE] done Kp=%.6f Ki=%.6f Kd=%.6f\n",
-                      (double)PID_settings.Kp, (double)PID_settings.Ki, (double)PID_settings.Kd);
+                      (double)new_kp, (double)new_ki, (double)new_kd);
         Serial.printf("[TUNE] saved to NVS, keep_rpm=%.1f -> enter PID_RUN\n",
-                      (double)PID_settings.keep_rpm);
+                      (double)pid_get_keep_rpm());
         Serial.println(F("[TUNE] ------------------------------"));
         break;
     }
@@ -481,7 +528,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
     case sTune::runPid:
     case sTune::timerPid:
         // sTune 內部在 tunings 後會進 timerPid/runPid；我們以 autotune_done 接管
-        if (!PID_settings.autotune_done && !PID_settings.autotune_active)
+        if (!pid_get_autotune_done() && !pid_get_autotune_active())
         {
             // 異常路徑：未拿到 tunings 卻離開 test
             Serial.printf("[TUNE] FAIL unexpected status=%u\n", (unsigned)st);
@@ -499,7 +546,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
                 tune_last_print_ms = now;
                 Serial.printf("[TUNE] wait st=%u rpm=%.1f pwm=%u\n",
                               (unsigned)st,
-                              (double)settings.now_speed,
+                              (double)pid_input_bridge,
                               (unsigned)duty);
             }
         }
@@ -507,7 +554,7 @@ static bool run_autotune_step(sTune &tuner, QuickPID &myPID)
         break;
     }
 
-    return !PID_settings.autotune_done;
+    return !pid_get_autotune_done();
 }
 
 void motor_PID_init(void *pvParameters)
@@ -516,8 +563,14 @@ void motor_PID_init(void *pvParameters)
 
     // 載入初始資料(從 NVS 讀出 Kp/Ki/Kd/tuned)
     PID_settings.load();
-    PID_settings.autotune_active = false;
-    PID_settings.autotune_done = false;
+    // ★不要在這裡把 keep_rpm 強制蓋成任何常數★
+    // 下面 begin_autotune()/略過調參分支裡「keep_rpm<=1 時鎖存目前速度」的原始邏輯
+    // 必須保留原樣：本機台 PWM→RPM 增益極不均勻，sTune 是對「開環階梯自然停下來的
+    // 那個轉速」做特性化，量測序列的起點也必須沿用同一個轉速(由 safe_current_reset()
+    // 讀 pid_get_keep_rpm() 取得)，而不是任何事先寫死的常數，否則會在調參完成的瞬間
+    // 命令系統跳去一個沒被特性化過的工作點，實測會長時間震盪不收斂。
+    pid_set_autotune_active(false);
+    pid_set_autotune_done(false);
     tuner_configured = false;
 
     // 配置PID基本參數(輸入,輸出,目標值)
@@ -535,11 +588,11 @@ void motor_PID_init(void *pvParameters)
                        sTune::NoOvershoot_PI, sTune::direct5T, sTune::printOFF);
 
     // 套用已載入的 PID 參數
-    myPID.SetTunings(PID_settings.Kp, PID_settings.Ki, PID_settings.Kd);
+    myPID.SetTunings(pid_get_Kp(), pid_get_Ki(), pid_get_Kd());
     // 配置PID輸出範圍
-    myPID.SetOutputLimits(0, ((1 << PID_settings.pwm_res) - 1));
+    myPID.SetOutputLimits(0, ((1 << pid_get_pwm_res()) - 1));
     // 取樣週期對齊測速任務(毫秒)
-    myPID.SetSampleTimeUs((uint32_t)settings.read_space * 1000UL);
+    myPID.SetSampleTimeUs((uint32_t)speed_get_read_space() * 1000UL);
     myPID.SetAntiWindupMode(myPID.iAwMode::iAwClamp);
     // 比例項改回「誤差值」計算(pOnError，QuickPID 預設)：
     // pOnMeas 原意是避免『設定值(keep_rpm)變動』瞬間造成 P 項突跳，但本專案 keep_rpm
@@ -554,21 +607,24 @@ void motor_PID_init(void *pvParameters)
     myPID.SetProportionalMode(myPID.pMode::pOnError);
     myPID.SetDerivativeMode(myPID.dMode::dOnMeas);
     // 初始化輸出PWM之定時器
-    ledcAttach(MOTOR_PWM_PIN, PID_settings.pwm_freq, PID_settings.pwm_res);
+    ledcAttach(MOTOR_PWM_PIN, pid_get_pwm_freq(), pid_get_pwm_res());
 
     // 上電先關閉
     ledcWrite(MOTOR_PWM_PIN, 0);
     pid_output = 0.0f;
     last_final_pwm = 0;
-    settings.ol_pwm_cmd = 0;
-    settings.ol_hold = false;
-    settings.ol_probe_request = false;
-    settings.ol_probe_ready = false;
+    {
+        SettingsLockGuard lock(g_speed_mux);
+        settings.ol_pwm_cmd = 0;
+        settings.ol_hold = false;
+        settings.ol_probe_request = false;
+        settings.ol_probe_ready = false;
+    }
 
     Serial.printf("[PID] loaded Kp=%.5f Ki=%.5f Kd=%.5f tuned=%d keep=%.1f "
                   "autotune_en=%d every_boot=%d\n",
-                  (double)PID_settings.Kp, (double)PID_settings.Ki, (double)PID_settings.Kd,
-                  (int)PID_settings.tuned, (double)PID_settings.keep_rpm,
+                  (double)pid_get_Kp(), (double)pid_get_Ki(), (double)pid_get_Kd(),
+                  (int)pid_get_tuned(), (double)pid_get_keep_rpm(),
                   (int)PID_AUTOTUNE_ENABLE, (int)PID_AUTOTUNE_EVERY_BOOT);
 
     while (1)
@@ -577,25 +633,47 @@ void motor_PID_init(void *pvParameters)
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
 
         // 失控保護：任何模組置位 fault 後，強制切斷並維持
-        if (settings.fault)
+        if (speed_get_fault())
         {
             myPID.SetMode(myPID.Control::manual);
-            PID_settings.autotune_active = false;
+            pid_set_autotune_active(false);
             tune_ready_seen = false;
             clear_speed_stable();
             pid_output = 0.0f;
-            settings.ol_pwm_cmd = 0;
+            speed_set_ol_pwm_cmd(0);
             last_final_pwm = 0;
             ledcWrite(MOTOR_PWM_PIN, 0);
             continue;
         }
 
+        // ★量測序列請求暫停(偵測到發電機斷線)：非故障，PWM 歸零並停在 PID_PAUSED，
+        // 不需重開機。刻意不清 const_speed_ready/autotune_done/tuned：
+        //   - const_speed_ready 會由 speed_sensor 既有的停轉偵測(SPEED_STALL_TIMEOUT_MS)
+        //     自然置 false，馬達真正停止後也會自然帶回開環重新爬升(ol_hold/settle_samples
+        //     都沒被清除，speed_sensor 會直接重新套用上次已知可行的 hold PWM，不必重新
+        //     從最低階爬升)；speed_sensor.cpp 的 update_phase_after_sample() 已同步修改，
+        //     會保留 PID_PAUSED 階段、暫停中不會把 const_speed_ready 搶回 true。
+        //   - autotune_done/tuned 維持 true，恢復時直接跳過自動調參，用已存參數閉環拉回
+        //     keep_rpm(暫停期間完全沒被動過，就是本次開機自動調參後自然停下來的那個
+        //     轉速，不是任何寫死的常數；理由見上面 motor_PID_init() 開頭的說明)。
+        if (meas_get_pause_request())
+        {
+            myPID.SetMode(myPID.Control::manual);
+            clear_speed_stable();
+            pid_output = 0.0f;
+            last_final_pwm = 0;
+            speed_set_ol_pwm_cmd(0);
+            speed_set_init_phase(SPEED_PHASE_PID_PAUSED);
+            ledcWrite(MOTOR_PWM_PIN, 0);
+            continue;
+        }
+
         // 測速尚未完成：階梯開環起動 + 就緒觀察
-        if (!settings.const_speed_ready)
+        if (!speed_get_const_speed_ready())
         {
             myPID.SetMode(myPID.Control::manual);
             tuner_configured = false;
-            PID_settings.autotune_active = false;
+            pid_set_autotune_active(false);
             tune_ready_seen = false;
             clear_speed_stable();
             open_loop_step_control(millis());
@@ -603,7 +681,7 @@ void motor_PID_init(void *pvParameters)
         }
 
         // 測速就緒後：若需要則先自動調參
-        if (!PID_settings.autotune_done)
+        if (!pid_get_autotune_done())
         {
             clear_speed_stable();
             if (need_autotune())
@@ -631,24 +709,25 @@ void motor_PID_init(void *pvParameters)
             else
             {
                 // 已有 NVS 參數，略過調參
-                PID_settings.autotune_done = true;
-                PID_settings.autotune_active = false;
-                if (PID_settings.keep_rpm <= 1.0f && settings.now_speed > 1.0f)
+                pid_set_autotune_done(true);
+                pid_set_autotune_active(false);
+                const float now_speed_now = speed_get_now_speed();
+                if (pid_get_keep_rpm() <= 1.0f && now_speed_now > 1.0f)
                 {
-                    PID_settings.keep_rpm = settings.now_speed;
+                    pid_set_keep_rpm(now_speed_now);
                 }
                 Serial.printf("[PID] skip autotune (NVS tuned=1), Kp=%.5f Ki=%.5f Kd=%.5f keep=%.1f\n",
-                              (double)PID_settings.Kp, (double)PID_settings.Ki,
-                              (double)PID_settings.Kd, (double)PID_settings.keep_rpm);
+                              (double)pid_get_Kp(), (double)pid_get_Ki(),
+                              (double)pid_get_Kd(), (double)pid_get_keep_rpm());
             }
         }
 
         // ----- PID 定速 -----
-        settings.init_phase = SPEED_PHASE_PID_RUN;
+        speed_set_init_phase(SPEED_PHASE_PID_RUN);
 
         // 先做快照(要在 SetMode 之前，QuickPID 切自動時會用當下的輸入/輸出做無擾接棒)
-        pid_input_bridge = settings.now_speed;
-        pid_setpoint_bridge = PID_settings.keep_rpm;
+        pid_input_bridge = speed_get_now_speed();
+        pid_setpoint_bridge = pid_get_keep_rpm();
 
         // 切入自動模式(以當前 duty 接棒，減少突跳)；同步將斜率限制基準對齊當前輸出，
         // 避免剛切自動的第一輪就被斜率限制夾住造成不必要的延遲
@@ -705,14 +784,15 @@ void motor_PID_init(void *pvParameters)
             myPID.SetOutputSum(final_pwm_f - myPID.GetPterm());
         }
 
-        // 閉環飛車保護：轉速超限立即切斷
-        if (settings.now_speed > RPM_RUNAWAY_MAX)
+        // 閉環飛車保護：轉速超限立即切斷(用本輪已取樣、也餵給 PID 的 pid_input_bridge，
+        // 確保判斷基準與這輪控制計算完全一致，同時省一次重複上鎖讀取)
+        if (pid_input_bridge > RPM_RUNAWAY_MAX)
         {
             trip_fault(FAULT_RUNAWAY_RPM);
             continue;
         }
 
-        settings.ol_pwm_cmd = (uint16_t)final_pwm; // 供 sensor 做「有輸出卻停轉」判斷
+        speed_set_ol_pwm_cmd((uint16_t)final_pwm); // 供 sensor 做「有輸出卻停轉」判斷
         ledcWrite(MOTOR_PWM_PIN, final_pwm);
 
         // 更新對外穩調旗標(其他模組依 settings.speed_stable 判斷)

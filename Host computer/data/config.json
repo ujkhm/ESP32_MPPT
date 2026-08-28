@@ -11,5 +11,14 @@
   "ui": {
     "refresh_ms": 200,
     "chart_max_points": 300
+  },
+  "bluetooth": {
+    "last_device_name": "",
+    "last_device_id": "",
+    "last_device_mac": "",
+    "last_com_port": ""
+  },
+  "report": {
+    "default_save_dir": ""
   }
 }
