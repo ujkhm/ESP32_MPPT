@@ -27,6 +27,7 @@ static float ema_V = 0.0f;
 static float ema_I = 0.0f;
 static float ema_P = 0.0f;
 static bool ema_inited = false;
+static uint32_t i_mismatch_last_log_ms = 0;
 
 // ★記憶體保護★：本檔案是 ina_settings 的唯一寫入者，對外發布一律透過
 // settings.h 提供的 ina_get_x()/ina_set_x()/ina_increment_sample_count() 介面，
@@ -71,7 +72,10 @@ static bool ina_configure()
     }
     delay(2);
 
-    uint16_t config = 0x4007; // AVG=1、最快轉換、連續分流+匯流排
+    // bit14-13 保留=10b、ADCRANGE、AVG、VBUSCT=140µs、VSHCT=140µs、MODE=連續分流+匯流排
+    uint16_t config = 0x4007;
+    config &= (uint16_t)~(7u << 9);
+    config |= (uint16_t)(((unsigned)INA232_AVG_CODE & 7u) << 9);
 #if !INA232_ADCRANGE_80MV
     config |= (1u << 12);
 #endif
@@ -116,7 +120,38 @@ static bool ina_sample_once()
 
     const float shunt_mV = (float)(int16_t)raw_shunt * INA_SHUNT_LSB_V * 1000.0f;
     const float bus_V = (float)(raw_bus & 0x7FFF) * INA_BUS_LSB_V;
-    const float current_A = (float)(int16_t)raw_current * current_lsb_A;
+    const float i_reg = (float)(int16_t)raw_current * current_lsb_A;
+    const float i_shunt = (shunt_mV * 0.001f) / (float)INA232_RSHUNT_OHM;
+    float current_A = i_reg;
+    // CURRENT 暫存器偶發 I2C/校正亂數時，分流電壓仍是類比量；兩者差太多就信分流。
+    {
+        const float scale = fmaxf(fabsf(i_reg), fabsf(i_shunt));
+        if (fabsf(i_reg - i_shunt) > fmaxf(0.04f, 0.25f * scale))
+        {
+            current_A = i_shunt;
+        }
+    }
+
+    // 負載接通且端子已被 5Ω 拉低時，I 必須約等於 V/R。對不上就標不可信、發布原始 0A（讓你看得見），
+    // 但不把 0 寫進 EMA，也不准量測模組拿去當 I_cont。不可用上一筆電流假裝還在測。
+    const bool mismatch = ema_inited && meas_get_load_connected() &&
+                          ina_loaded_vi_mismatch(bus_V, current_A);
+    if (mismatch)
+    {
+        const uint32_t now_ms = millis();
+        if (i_mismatch_last_log_ms == 0 || (now_ms - i_mismatch_last_log_ms) >= 200u)
+        {
+            i_mismatch_last_log_ms = now_ms;
+            Serial.printf("[INA] V/I mismatch (not used for test) I=%.3f V=%.2f expect=%.3f\n",
+                          (double)current_A, (double)bus_V,
+                          (double)(bus_V / (float)LOAD_TEST_RESISTOR_OHM));
+        }
+    }
+    else
+    {
+        i_mismatch_last_log_ms = 0;
+    }
+
     const float power_W = fabsf(bus_V * current_A);
 
     if (!ema_inited)
@@ -130,19 +165,23 @@ static bool ina_sample_once()
     {
         const float a = INA232_FILTER_ALPHA;
         ema_V += a * (bus_V - ema_V);
-        ema_I += a * (current_A - ema_I);
-        ema_P += a * (power_W - ema_P);
+        if (!mismatch)
+        {
+            ema_I += a * (current_A - ema_I);
+            ema_P += a * (power_W - ema_P);
+        }
     }
 
-    // 這組欄位代表「這一次成功讀值」的完整結果，整段上鎖一起發布，
-    // 避免其他任務(board_ui/main)讀到「新電壓配舊電流」這種不存在的組合
+    // 這組欄位代表「這一次成功讀值」的完整結果，整段上鎖一起發布。
+    // mismatch 時 current_A 發原始讀值（可能是 0），current_plausible=false。
     {
         SettingsLockGuard lock(g_ina_mux);
         ina_settings.shunt_mV = shunt_mV;
         ina_settings.bus_V = ema_V;
-        ina_settings.current_A = ema_I;
-        ina_settings.power_W = ema_P;
+        ina_settings.current_A = mismatch ? current_A : ema_I;
+        ina_settings.power_W = mismatch ? power_W : ema_P;
         ina_settings.data_valid = true;
+        ina_settings.current_plausible = !mismatch;
     }
     ina_increment_sample_count();
     return true;
@@ -242,6 +281,7 @@ static void ina232_task(void *pvParameters)
                 {
                     fail_streak = 0;
                     ema_inited = false;
+                    i_mismatch_last_log_ms = 0;
                     ina_set_online(true);
                     Serial.println("[INA] reconfigure ok");
                 }

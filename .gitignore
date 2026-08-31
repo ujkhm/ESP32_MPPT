@@ -1,11 +1,9 @@
 # -------------------------------
 # 1. KiCad 电路设计文件
 # -------------------------------
-# 额外忽略 KiCad 的特殊临时文件
 KiCad/#auto_saved_files#
 KiCad/KiCad-backups/
 KiCad/~*.lck
-# 临时与备份文件
 *.000
 *.bak
 *.bck
@@ -17,25 +15,21 @@ KiCad/~*.lck
 _autosave-*
 *-save.pro
 *-save.kicad_pcb
+*.FCBak
 
 # 自动生成的缓存
 fp-info-cache
-# 编译/导出的中间文件
 /build
-# 生成的网表文件
 *.net
-# 自动布线文件
 *.dsn
 *.ses
-# 导出的BOM物料清单
 *.xml
 *.csv
 *.tsv
-# 杂项日志文件
 *.log
 *.raw
-# 第三方工具缓存
 .svg2shenzhen-cache
+_analyze_log.txt
 
 # -------------------------------
 # 2. Visual Studio Code (VSCode)
@@ -48,19 +42,18 @@ fp-info-cache
 *.code-workspace
 
 # -------------------------------
-# 3. ESP-IDF (ESP32 开发框架)
+# 3. ESP-IDF / PlatformIO
 # -------------------------------
-# 编译生成的二进制文件
 build/
 build_*_*/
-# 配置文件
+.pio/
 sdkconfig
-# Python 缓存
 __pycache__/
 .pytest_cache/
-# IDF 工具生成的文件
 pytest_embedded_log/
 dependencies.lock
+VSCode/esp32_code/compile_commands.json
+VSCode/esp32_code/.cache/
 
 # -------------------------------
 # 4. 系统或通用临时文件
@@ -70,19 +63,16 @@ Thumbs.db
 *.tmp
 *.swp
 *.swo
-# 忽略微軟 Office 的所有暫存鎖定檔
 ~$*
 ~*
 .~$*
 
 # -------------------------------
 # 5. Host computer (上位機)
+# 倉庫只保留免安裝執行檔與說明；本機開發用的 Python 環境、原始碼、打包中間檔不提交。
+# 注意：忽略目錄後無法再「反忽略」其內部檔案，所以只忽略 Host computer 下一層。
 # -------------------------------
-Host computer/.venv/
-Host computer/build/
-Host computer/dist/
-Host computer/__pycache__/
-Host computer/ESP32_MPPT_Host.exe
-Host computer/data/logs/*
-!Host computer/data/logs/.gitkeep
-!Host computer/data/logs/.gitignore
+Host computer/*
+!Host computer/README.md
+!Host computer/MicroGeneratorHost.exe
+Host computer/com4_capture.log

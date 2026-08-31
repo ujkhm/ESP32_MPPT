@@ -34,8 +34,26 @@ void curve_calc_run()
     const float n_rl = (i_allow * (rth + (float)LOAD_TEST_RESISTOR_OHM)) / ke; // 固定測試電阻功率封頂，僅供參考
 
     float n_lim = fminf(fminf(n_knee, n_voc), (float)SAFE_RPM_MAX_CEILING);
+    const float brush_cap = meas_get_brush_jump_rpm();
+    const float drive_cap = meas_get_drive_limit_rpm();
+    if (brush_cap > 1.0f)
+    {
+        n_lim = fminf(n_lim, brush_cap);
+    }
+    if (drive_cap > 1.0f)
+    {
+        n_lim = fminf(n_lim, drive_cap);
+    }
     uint8_t reason;
-    if (n_lim >= n_knee - 1e-3f)
+    if (drive_cap > 1.0f && n_lim >= drive_cap - 1e-3f)
+    {
+        reason = LIMIT_REASON_DRIVE_LIMIT;
+    }
+    else if (brush_cap > 1.0f && n_lim >= brush_cap - 1e-3f)
+    {
+        reason = LIMIT_REASON_BRUSH_JUMP;
+    }
+    else if (n_lim >= n_knee - 1e-3f)
     {
         reason = LIMIT_REASON_MPP_KNEE;
     }

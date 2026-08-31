@@ -152,15 +152,17 @@ static void build_live_message()
            (int)speed_get_speed_valid(), (int)speed_get_speed_stable(), (int)speed_get_const_speed_ready());
 
     append(live_buf, sizeof(live_buf), len,
-           "\"ina_online\":%d,\"ina_valid\":%d,\"bus_V\":%.3f,\"current_A\":%.4f,\"power_W\":%.3f,",
-           (int)ina_get_online(), (int)ina_get_data_valid(),
+           "\"ina_online\":%d,\"ina_valid\":%d,\"ina_plausible\":%d,"
+           "\"bus_V\":%.3f,\"current_A\":%.4f,\"power_W\":%.3f,",
+           (int)ina_get_online(), (int)ina_get_data_valid(), (int)ina_get_current_plausible(),
            (double)ina_get_bus_V(), (double)ina_get_current_A(), (double)ina_get_power_W());
 
     append(live_buf, sizeof(live_buf), len,
            "\"meas_phase\":%u,\"meas_phase_name\":\"%s\",\"resume_phase\":%u,"
-           "\"link_lost\":%d,\"load_connected\":%d,\"session_active\":%d,",
+           "\"link_lost\":%d,\"pause_cause\":%u,\"load_connected\":%d,\"session_active\":%d,",
            (unsigned)meas_get_phase(), meas_phase_str(meas_get_phase()), (unsigned)meas_get_resume_phase(),
-           (int)meas_get_link_lost(), (int)meas_get_load_connected(), (int)meas_get_session_active());
+           (int)meas_get_link_lost(), (unsigned)meas_get_pause_cause(),
+           (int)meas_get_load_connected(), (int)meas_get_session_active());
 
     append(live_buf, sizeof(live_buf), len,
            "\"safe_phase\":%u,\"safe_target_rpm\":%.0f,\"safe_oc_V\":%.3f,"

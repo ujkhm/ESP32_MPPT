@@ -53,10 +53,11 @@
 // 從馬達一啟動就開始計時、全程持續生效，不會有「還沒等到某個階段」或
 // 「已經動過一次就永久失效」之類的空窗——任何時刻卡死(卡死/斷軸/感測器
 // 故障/接線脫落等)都會在此時限內被抓到。
-// 本機台不會有劇烈負載變化，正常運轉中脈衝間隔應遠小於此值；
-// 請依實測「按下 START 到第一次感應到脈衝」與「爬升過程中最大脈衝間隔」
-// 抓安全餘量調整，數值愈小保護愈即時，但也愈容易誤判。
-#define NO_PULSE_TIMEOUT_MS 500
+// 5Ω 負載通斷是階躍擾動：轉速會瞬間掉/衝，光柵脈衝間隔會暫時拉長，
+// 但不代表卡死。門檻需大於「負載階躍後 PID 把轉速拉回可讀區」的最長無脈衝空窗，
+// 又遠短於真的卡死。請依實測「按下 START 到第一次脈衝」與「接負載後最大脈衝間隔」
+// 抓安全餘量；數值愈小保護愈即時，但也愈容易在負載階躍時誤判。
+#define NO_PULSE_TIMEOUT_MS 800
 
 // PID 自動調參(sTune)：速度感測器調教完成(const_speed_ready)後執行
 // 注意：本機台 PWM→RPM 增益極大(小小的佔空比變化就能造成數千 RPM 變化)，
@@ -102,6 +103,19 @@
 // 0↔滿載間硬切換造成機械衝擊
 #define SPEED_FILTER_ALPHA 0.22f // 轉速量測的 EMA 濾波係數(愈小愈平滑、愈慢反應)
 #define PID_OUTPUT_SLEW_MAX 60  // 定速閉環每次控制週期(read_space)PWM 最大變化量(count，滿載為 1023)
+// 負載通斷 / 換轉速檔時的短暫增益排程(只在這兩類擾動期間生效，穩態維持調參值)：
+// 調參得到的 NoOvershoot_PI 偏保守，5Ω 階躍或 +300RPM 換檔時 PWM 被斜率限制慢慢爬。
+// 暫態把 Kp/Ki 與斜率上限一起加大；連續貼近目標或逾時立刻退回原值。
+// 誤差輔助必須連續成立才進、連續貼近才退：單筆光柵離群／EMA 晃過門檻不得把增益×2、slew
+// 放到接近滿載，否則會抽搐（實測 PWM 單步 170～234、暫態 ON/OFF 每秒來回）。
+#define PID_TRANSIENT_GAIN_SCALE 2.0f // 相對目前調參 Kp/Ki 的倍率(>1 才加速；Ti 維持不變)
+#define PID_TRANSIENT_SLEW_MAX 90     // 暫態期間每週期 PWM 最大變化(count)；負載接通另有 PID_LOAD_ON_PWM_BUMP
+#define PID_TRANSIENT_MAX_MS 8000     // 暫態最長時間；逾時強制退回原增益，避免一直用高增益震盪
+#define PID_TRANSIENT_EXIT_ERR_RPM 50.0f // |實際-目標| 低於此才開始計「可退回」(比 speed_stable 更嚴)
+#define PID_TRANSIENT_EXIT_NEED_HITS 12  // 連續貼近幾次才退回原增益(約 read_space×N ms)，避免晃過一次就 OFF
+#define PID_ASSIST_ERR_RPM 90.0f         // 誤差再大過此值才開始計「誤差輔助」(帶載後半段爬升過慢)
+#define PID_ASSIST_NEED_HITS 10          // 連續超差幾次才進暫態：單筆離群／EMA 抖動不觸發
+#define PID_LOAD_ON_PWM_BUMP 90          // 負載接通當下先加的 PWM count，抵消發電機扭矩階躍
 
 // 轉速穩調旗標(speed_stable)判定：僅在整機正常閉環且貼近目標時才可能為 true
 #define SPEED_STABLE_ABS_EPS 40.0f             // |實際轉速-目標| 低於此值的基底(RPM)
@@ -142,13 +156,17 @@ enum speed_fault_code : uint8_t
 
 // ---- INA232 電壓/電流感測 ----
 // 原理圖 R8=0.1Ω(2512)；ADCRANGE=0(±81.92mV) → 理論最大約 0.819A，故 Imax 取 0.8A 留餘量
-// 晶片端 AVG=1(每次轉換立即更新)；平均/平滑改由 ESP32 做 EMA
+// 晶片 AVG=16。帶載時 V 仍像被 5Ω 拉住而 I≈0：標 current_plausible=false，
+// 不把這筆寫進 EMA、也不准安全電流／內阻拿去算結果。不可用上一筆電流假裝還在測。
 #define INA232_I2C_ADDR 0x40     // INA232A + A0→GND；若 A0 接 VS/SDA/SCL 請改 0x41/0x42/0x43
 #define INA232_RSHUNT_OHM 0.1f   // 分流電阻(Ω)，對應原理圖 R8
 #define INA232_IMAX_A 0.8f       // 預期最大電流(A)，用於計算 Current_LSB / Calibration
 #define INA232_ADCRANGE_80MV 1   // 1=±81.92mV(ADCRANGE=0)；0=±20.48mV(ADCRANGE=1，CAL 需 /4)
+#define INA232_AVG_CODE 2        // CONFIG AVG 欄位：0=1、1=4、2=16、3=64（datasheet Table 7-4）
 #define INA232_FILTER_ALPHA 0.2f // ESP32 端 EMA 係數(愈小愈平滑、愈慢反應)
 #define INA232_TASK_PERIOD_MS 1  // 讀取任務週期；1ms + 最短轉換時間 ≈ 盡可能快
+#define INA_I_VS_V_MIN_RATIO 0.40f // 帶載時 |I| 低於 (V/Rload)*此比例 → 這一筆電流不能當測試數據
+#define INA_I_INCONSISTENT_PAUSE_MS 500 // 帶載 V/I 連續對不上超過此時長：暫停本檔，不把 0A 寫進 I_cont
 
 // ---- 板載互動介面(OLED + START) ----
 #define OLED_I2C_ADDR 0x3C // 0.96" SSD1306 常見位址
@@ -169,7 +187,7 @@ enum ui_app_state : uint8_t
     UI_WAIT_START = 0, // 開機等待按下 START 才開始測試
     UI_RUNNING = 1,    // 已啟動馬達控制，螢幕顯示即時資訊
     UI_ESTOP = 2,      // 緊急停止鎖定，僅重開機可恢復
-    UI_LINK_LOST = 3,  // 發電機斷線暫停：非故障，排除後重按 START 續測
+    UI_LINK_LOST = 3,  // 夾子／量測線鬆脫暫停：非故障，排除後重按 START 從中斷處續測
 };
 
 // =====================================================================================
@@ -468,8 +486,9 @@ struct ina232_sensor
     float power_W = 0.0f;      // 功率(W) = |V×I| 或由暫存器換算後再平滑
     float shunt_mV = 0.0f;     // 分流電壓(mV)，除錯用
     bool online = false;       // 是否成功辨識到 INA232(Manufacturer ID)
-    bool data_valid = false;   // 是否已有至少一筆成功讀值
-    uint32_t sample_count = 0; // 累計成功讀取次數
+    bool data_valid = false;       // 是否已有至少一筆成功讀值
+    bool current_plausible = true; // 帶載時 V/I 是否符合 5Ω；false 時 current_A 仍是原始讀值，禁止當測試數據
+    uint32_t sample_count = 0;     // 累計成功讀取次數
 };
 extern volatile ina232_sensor ina_settings; // 實體在 ina232.cpp
 
@@ -480,6 +499,7 @@ SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, power_W, float)
 SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, shunt_mV, float)
 SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, online, bool)
 SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, data_valid, bool)
+SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, current_plausible, bool)
 SETTINGS_SCALAR_ACCESSOR(ina, ina_settings, g_ina_mux, sample_count, uint32_t)
 
 // 讀-改-寫一次鎖完成的原子遞增，避免「讀出→+1→寫回」中間被插隊造成遺失更新
@@ -534,7 +554,7 @@ SETTINGS_SCALAR_ACCESSOR(ui, ui_settings, g_ui_mux, oled_ok, bool)
 
 // ---- 負載開關：沿用 pins.h 既有的 SERVO_PIN(不改名)，高電位＝把測試負載接上發電機 ----
 #define LOAD_SWITCH_ACTIVE_HIGH 1    // 1=高電位接通負載；0=低電位接通
-#define LOAD_TEST_RESISTOR_OHM 20.0f // 測試負載標稱電阻(Ω)，對應安全電流／內阻兩模組共用的固定負載
+#define LOAD_TEST_RESISTOR_OHM 5.0f // 測試負載標稱電阻(Ω)，對應安全電流／內阻兩模組共用的固定負載；須與實物一致
 #define LOAD_SWITCH_SETTLE_MS 60     // 切換負載後，繼電器/MOSFET 接點穩定的等待(ms)
 
 // ---- 發電機防反接串聯蕭特基二極體(SS54)電壓補償 ----
@@ -583,25 +603,61 @@ inline float ss54_compensate_voltage_V(float measured_bus_V, float current_A)
     return measured_bus_V + ss54_forward_drop_V(current_A);
 }
 
-// ---- 發電機斷線(鱷魚夾脫落)偵測：非故障，重按 START 即可續測目前模組 ----
+// ---- 發電機／負載鱷魚夾脫落：非故障，重按 START 從中斷的那一檔／那一點續測（保留已通過進度） ----
 #define GEN_LINK_LOST_V_MAX 0.15f     // 匯流排電壓低於此值視為「無輸出」(★依實際 k_e 調整，須遠小於最低轉速下的 Voc)
 #define GEN_LINK_LOST_TIMEOUT_MS 3000 // 連續無輸出超過此時間才判定斷線("超過數秒")，避免瞬間雜訊誤判
 
 // ---- 安全電流識別(SAFE_CURRENT_ARCH.md) ----
 #define SAFE_I_HARD_CEILING_A 0.6f                      // 硬電流天花板，必須低於 INA232 0.8A 滿量程(★依實際電機調整)
-#define SAFE_I_MIN_VALID_A 0.02f                        // 電流低於此值視為負載未接上/量測異常
+#define SAFE_I_MIN_VALID_A 0.02f                        // 電流低於此值才「有資格」再看是不是開路
+#define SAFE_I_OPEN_V_RATIO 0.50f                       // V >= Voc*此比例才像真開路(帶載時端子會被拉低很多)
+#define SAFE_I_CONTACT_CONFIRM_MS 400                   // 開路特徵需連續成立才當夾子鬆脫；INA 單筆電流雜訊不算
+
+// 帶載且端子仍被 5Ω 拉在低電壓時，電流必須約等於 V/R。I≈0 而 V 仍是 1～2V：這一筆不是真實電流，
+// 禁止寫進 I_cont／熱下垂／內阻。電壓已高到不像 5Ω 帶載（真開路）則不算 mismatch。
+inline bool ina_loaded_vi_mismatch(float bus_V, float current_A)
+{
+    const float i_from_v = bus_V / (float)LOAD_TEST_RESISTOR_OHM;
+    if (i_from_v < (float)SAFE_I_MIN_VALID_A)
+    {
+        return false;
+    }
+    if (i_from_v > (float)SAFE_I_HARD_CEILING_A * 1.2f)
+    {
+        return false;
+    }
+    return fabsf(current_A) < i_from_v * (float)INA_I_VS_V_MIN_RATIO;
+}
 #define SAFE_I_PASS_DROOP_RATIO 0.03f                   // 熱穩後下垂 ≤ 此比例(3%) → 本檔通過
 #define SAFE_I_LIMIT_DROOP_RATIO 0.08f                  // 熱穩後下垂 ≥ 此比例(8%) → 本檔視為上限(不算通過)
 #define SAFE_RPM_STEP 300.0f                            // 每檔轉速增量(★依實際機台調整)
-#define SAFE_RPM_MAX_CEILING 6000.0f                    // 階梯允許的最高轉速，人為天花板(★務必依實際機台調整，需遠低於飛車 RPM_RUNAWAY_MAX)
+#define SAFE_RPM_MAX_CEILING 14000.0f                   // 僅曲線／n_lim 遠端守衛(須遠低於飛車 RPM_RUNAWAY_MAX)。安全電流階梯不再拿它當終點：PWM 頂滿仍轉不到下一檔 → 用上一檔進內阻
+#define SAFE_DRIVE_STALL_HOLD_MS 3000                   // WAIT_SPEED 期間 PWM 已頂滿且仍離目標太遠、持續此時長 → 判定主動力轉不到
+#define SAFE_DRIVE_STALL_PWM_SLACK 8                    // 距滿格少於此 count 視為 PWM 已頂滿(10-bit 滿格 1023)
+#define SAFE_HANDOFF_COAST_MIN_MS 500                   // 進內阻前 PWM=0 最短滑行：光柵可能已讀偏低，不可立刻放行 PID
+#define SAFE_HANDOFF_COAST_MAX_MS 8000                  // 滑行上限；逾時 Voc 仍高 → 硬故障(PWM 可能沒真正歸零)
+#define SAFE_HANDOFF_VOC_RATIO 1.20f                    // 滑行完成：匯流排 Voc ≤ 上一通過檔 Voc × 此比例(Voc 才是真實轉速)
 #define SAFE_ELECTRICAL_SETTLE_MS 300                   // 接通負載後，電氣穩定等待(ms)
 #define SAFE_THERMAL_CHECK_WINDOW_MS 20000              // 判斷「打平」的觀察窗(ms)
 #define SAFE_THERMAL_SOAK_MAX_MS (15UL * 60UL * 1000UL) // 熱穩逾時上限(15 分鐘)
-#define SAFE_COOLDOWN_MS (30UL * 1000UL)                // 檔與檔之間最短冷卻時間(ms)(★依實際散熱調整)
+#define SAFE_COOLDOWN_MS (15UL * 1000UL)                // 檔與檔之間最短冷卻時間(ms)(★依實際散熱調整)
 #define SAFE_OC_SAMPLE_MS 500                           // 開路取樣視窗(ms)
 #define SAFE_OC_MAX_CURRENT_A 0.02f                     // 開路電流高於此值視為負載黏住(接線異常)
 #define SAFE_SPEED_WAIT_TIMEOUT_MS 25000                // 等待穩調的基底逾時(ms)
 #define SPEED_WAIT_TIMEOUT_PER_RPM_MS 7                 // 隨目標轉速追加的逾時(ms/RPM)
+
+// ---- 發電機跳刷偵測(安全電流階梯期間，只用 INA) ----
+// 對象是待測發電機換向器，不是主動力 775、也不是光柵。帶載時電流瞬間掉向 0、
+// 開路時電壓閃爍 → 判跳刷。偵測到且至少已有一檔通過 → 用上一檔 I_cont，
+// 報表 n_lim 鎖在那一檔，不算硬故障。第一檔就跳刷才鎖定。
+#define BRUSH_JUMP_MIN_RPM 2800.0f           // 低於此轉速不判跳刷(低轉 INA 雜訊較多)
+#define BRUSH_JUMP_I_DROP_RATIO 0.45f        // 帶載電流掉到電氣穩態的此比例以下算一次閃斷
+#define BRUSH_JUMP_I_HITS 5                  // 觀察窗內閃斷次數
+#define BRUSH_JUMP_I_WINDOW_MS 800           // 帶載電流閃斷觀察窗(ms)
+#define BRUSH_JUMP_V_OC_RATIO 0.22f          // 開路電壓相對 EMA 掉超過此比例算一次
+#define BRUSH_JUMP_V_HITS 5                  // 開路電壓閃爍次數
+#define BRUSH_JUMP_V_WINDOW_MS 800           // 開路電壓觀察窗(ms)
+#define BRUSH_JUMP_IGNORE_AFTER_CONNECT_MS 500 // 剛接通負載的電流階躍不計入跳刷
 
 // ---- 內阻識別(INTERNAL_RESISTANCE_ARCH.md) ----
 #define RES_MAX_POINTS 3                // 高/中/低三個轉速點(量測順序為高→中→低，見 gen_resistance.cpp)
@@ -633,8 +689,16 @@ enum measure_phase : uint8_t
     MEAS_SAFE_CURRENT = 2,   // 安全電流識別中
     MEAS_RESISTANCE = 3,     // 內阻識別中
     MEAS_CURVE_CALC = 4,     // 曲線＋極限轉速計算中(馬達已關閉)
-    MEAS_DONE = 5,           // 全部完成，馬達已關閉，可取下發電機
-    MEAS_LINK_LOST = 6,      // 發電機斷線暫停中，等待重按 START
+    MEAS_DONE = 5,           // 全部完成，馬達已關閉；UI 回到待測，可再按 START 重測
+    MEAS_LINK_LOST = 6,      // 量測暫停中（夾子鬆脫或 INA V/I 不一致），等待重按 START 續測
+};
+
+// 暫停原因：同一套 START 續測，畫面／上位機文案不同，避免把 INA 讀錯當成夾子鬆脫
+enum meas_pause_cause : uint8_t
+{
+    PAUSE_CAUSE_NONE = 0,
+    PAUSE_CAUSE_CONTACT = 1,      // 負載沒接上／電壓回到 Voc
+    PAUSE_CAUSE_INA_MISMATCH = 2, // 帶載電壓還在，電流讀值與 V/R 對不上（本檔數據作廢，重做這一檔）
 };
 
 // 安全電流模組內部子階段(對應 SAFE_CURRENT_ARCH.md 狀態機 B~G)
@@ -647,6 +711,7 @@ enum safe_current_phase : uint8_t
     SAFE_PH_THERMAL_SOAK = 4, // 熱穩觀察
     SAFE_PH_JUDGE = 5,        // 本檔判定(先斷負載)
     SAFE_PH_COOLDOWN = 6,     // 檔與檔之間冷卻
+    SAFE_PH_HANDOFF = 7,      // 進內阻前：PWM=0 滑行到上一檔 Voc，再拉回上一通過檔
 };
 
 // 內阻模組內部子階段(對應 INTERNAL_RESISTANCE_ARCH.md 狀態機 P1~P6)
@@ -668,6 +733,8 @@ enum curve_limit_reason : uint8_t
     LIMIT_REASON_MPP_KNEE = 2,     // 最大功率點合法上限(n_knee)最嚴
     LIMIT_REASON_OPEN_VOLTAGE = 3, // 開路耐壓上限(n_voc)最嚴
     LIMIT_REASON_CEILING = 4,      // 人為天花板最嚴，或資料不足只能用天花板
+    LIMIT_REASON_BRUSH_JUMP = 5,   // 跳刷：尚未熱封頂就接觸不穩，n_lim 鎖在上一通過檔
+    LIMIT_REASON_DRIVE_LIMIT = 6,  // 主動力轉不到下一檔：I_cont／n_lim 鎖在上一通過檔，不是硬故障
 };
 
 // 量測序列共享狀態：measure_seq 所在任務是唯一寫入者，其餘任務一律唯讀。
@@ -675,14 +742,16 @@ struct measure_settings
 {
     // ---- 頂層流程 ----
     uint8_t phase = MEAS_IDLE;        // 見 measure_phase
-    uint8_t resume_phase = MEAS_IDLE; // 斷線暫停時，記住要恢復到哪個階段(MIN_SPEED_HOLD/SAFE_CURRENT/RESISTANCE)
+    uint8_t resume_phase = MEAS_IDLE; // 夾子暫停時，記住要恢復到哪個階段(MIN_SPEED_HOLD/SAFE_CURRENT/RESISTANCE)
     bool session_active = false;      // 本次 START 之後量測序列是否已啟動(供顯示用)
 
-    // ---- 發電機斷線(鱷魚夾脫落)偵測與暫停/續測 ----
+    // ---- 鱷魚夾／量測線鬆脫偵測與暫停/續測（START 從中斷檔／點繼續，不整段重跑） ----
     bool armed = false;            // 本次啟動後是否已出現過一次 speed_stable(之前不信任電壓判斷)
-    bool link_lost = false;        // 對外：目前是否處於斷線暫停
+    bool link_lost = false;        // 對外：目前是否處於夾子鬆脫暫停
     bool pause_request = false;    // 寫給 motor_PID：true=把 PWM 歸零並停在 PID_PAUSED(motor_PID 只讀)
     bool resume_requested = false; // 由 main.cpp(偵測到 START 按下)寫入 true；measure_seq 消化後清回 false
+    bool restart_requested = false; // 測完回到待測後再按 START：整段重跑(不重開機、不重調參)
+    uint8_t pause_cause = PAUSE_CAUSE_NONE;
 
     // ---- 負載開關(對外顯示用；實際腳位操作在 measure_seq.cpp) ----
     bool load_connected = false; // 目前負載開關電位是否等於「已接通」
@@ -702,6 +771,9 @@ struct measure_settings
     float safe_i_cont_rpm = 0.0f;      // 結果：量到 I_cont 當時的轉速(通過的最高檔)
     float safe_last_pass_rpm = 0.0f;   // 內部：目前為止通過的最高檔轉速(逐檔更新)
     float safe_last_pass_A = 0.0f;     // 內部：目前為止通過的最高檔熱穩電流
+    float safe_last_pass_oc_V = 0.0f;  // 內部：上一通過檔的開路電壓(交接滑行用；光柵不可信時 Voc 才是真實轉速)
+    float brush_jump_rpm = 0.0f;       // >0：本輪因跳刷提前結束，報表 n_lim 不得超過此轉速
+    float drive_limit_rpm = 0.0f;      // >0：本輪因主動力轉不到下一檔結束，報表 n_lim 不得超過此轉速
 
     // ==================== 內阻模組 ====================
     uint8_t res_phase = RES_PH_PREP; // 見 resistance_phase
@@ -744,6 +816,8 @@ SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, armed, bool)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, link_lost, bool)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, pause_request, bool)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, resume_requested, bool)
+SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, restart_requested, bool)
+SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, pause_cause, uint8_t)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, load_connected, bool)
 
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_phase, uint8_t)
@@ -760,6 +834,9 @@ SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_i_cont_A, float)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_i_cont_rpm, float)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_last_pass_rpm, float)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_last_pass_A, float)
+SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, safe_last_pass_oc_V, float)
+SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, brush_jump_rpm, float)
+SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, drive_limit_rpm, float)
 
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, res_phase, uint8_t)
 SETTINGS_SCALAR_ACCESSOR(meas, meas_settings, g_meas_mux, res_point_index, uint8_t)

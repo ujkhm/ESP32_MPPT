@@ -43,11 +43,22 @@ static uint16_t last_final_pwm = 0;
 static uint8_t speed_stable_hits = 0;
 static float last_keep_rpm_seen = -1.0f;
 
+// 負載通斷 / 換轉速檔的短暫增益排程(只在 PID_RUN 生效)
+static bool pid_transient_active = false;
+static uint32_t pid_transient_start_ms = 0;
+static bool pid_load_seen = false;
+static bool pid_last_load_connected = false;
+static float last_keep_for_gain = -1.0f;
+static uint8_t pid_assist_hits = 0;
+static uint8_t pid_transient_exit_hits = 0;
+
 // ★記憶體保護★：本檔案對 settings/PID_settings 的存取一律透過 settings.h 提供的
 // 介面——單一欄位讀寫用 speed_get_x()/set_x()、pid_get_x()/set_x()；需要「一次原子
 // 讀寫好幾個相關欄位」的狀態轉換(例如 trip_fault、調參結果落地)則用 SettingsLockGuard
 // 包住整段直接存取欄位。務必注意：settings 用 g_speed_mux、PID_settings 用 g_pid_mux，
 // 兩個不同的鎖，程式中任何地方都不會巢狀同時持有兩者，避免交叉鎖死的風險。
+// 暫態增益只讀 meas_get_load_connected()(g_meas_mux)，讀完即放，不會與 g_pid_mux /
+// g_speed_mux 同時持有。
 
 // 強制清除對外穩調旗標(初始化/故障/換目標/未就緒時呼叫)
 static void clear_speed_stable()
@@ -111,6 +122,161 @@ static void update_speed_stable()
     }
 }
 
+static void pid_read_base_gains(float &kp, float &ki, float &kd)
+{
+    SettingsLockGuard lock(g_pid_mux);
+    kp = PID_settings.Kp;
+    ki = PID_settings.Ki;
+    kd = PID_settings.Kd;
+}
+
+static void pid_apply_base_tunings(QuickPID &myPID)
+{
+    float kp, ki, kd;
+    pid_read_base_gains(kp, ki, kd);
+    myPID.SetTunings(kp, ki, kd);
+}
+
+static void pid_apply_transient_tunings(QuickPID &myPID)
+{
+    float kp, ki, kd;
+    pid_read_base_gains(kp, ki, kd);
+    myPID.SetTunings(kp * (float)PID_TRANSIENT_GAIN_SCALE,
+                     ki * (float)PID_TRANSIENT_GAIN_SCALE,
+                     kd);
+}
+
+static void pid_exit_transient(QuickPID &myPID, const char *why)
+{
+    if (!pid_transient_active)
+    {
+        return;
+    }
+    pid_transient_active = false;
+    pid_assist_hits = 0;
+    pid_transient_exit_hits = 0;
+    pid_apply_base_tunings(myPID);
+    Serial.printf("[PID] transient gain OFF (%s)\n", why);
+}
+
+static void pid_enter_transient(QuickPID &myPID, uint32_t now_ms, const char *why,
+                                bool load_on_ff, bool restart_timer)
+{
+    if (!pid_transient_active)
+    {
+        // 進暫態當下立刻清穩調：負載剛切時轉速還沒掉，speed_stable 可能仍為 true，
+        // 若不先清，同一輪結尾就會誤判「已穩」而立刻退回原增益。
+        clear_speed_stable();
+        pid_transient_active = true;
+        pid_transient_start_ms = now_ms;
+        pid_transient_exit_hits = 0;
+        pid_apply_transient_tunings(myPID);
+        Serial.printf("[PID] transient gain ON (%s) x%.2f slew=%u\n",
+                      why, (double)PID_TRANSIENT_GAIN_SCALE,
+                      (unsigned)PID_TRANSIENT_SLEW_MAX);
+    }
+    else if (restart_timer)
+    {
+        // 負載通斷／換檔是新的真實擾動：重算 8s 上限。誤差輔助不得每輪刷新，否則永遠退不出。
+        pid_transient_start_ms = now_ms;
+        pid_transient_exit_hits = 0;
+    }
+    if (load_on_ff)
+    {
+        const float bumped = fminf(pid_output + (float)PID_LOAD_ON_PWM_BUMP, max_pwm_value);
+        pid_output = bumped;
+        last_final_pwm = (uint16_t)bumped;
+    }
+}
+
+static void pid_reset_transient_state(QuickPID *myPID)
+{
+    if (pid_transient_active && myPID != nullptr)
+    {
+        pid_exit_transient(*myPID, "reset");
+    }
+    else
+    {
+        pid_transient_active = false;
+    }
+    pid_load_seen = false;
+    last_keep_for_gain = -1.0f;
+    pid_assist_hits = 0;
+    pid_transient_exit_hits = 0;
+}
+
+static void pid_update_transient_enter(QuickPID &myPID, uint32_t now_ms)
+{
+    const float keep_now = pid_get_keep_rpm();
+    const bool load_now = meas_get_load_connected();
+
+    if (!pid_load_seen)
+    {
+        pid_load_seen = true;
+        pid_last_load_connected = load_now;
+    }
+    else if (load_now != pid_last_load_connected)
+    {
+        pid_last_load_connected = load_now;
+        pid_enter_transient(myPID, now_ms, load_now ? "load ON" : "load OFF", load_now, true);
+    }
+
+    if (last_keep_for_gain < 0.0f)
+    {
+        last_keep_for_gain = keep_now;
+    }
+    else if (fabsf(keep_now - last_keep_for_gain) > 0.5f)
+    {
+        last_keep_for_gain = keep_now;
+        pid_enter_transient(myPID, now_ms, "rpm step", false, true);
+    }
+
+    // 誤差輔助：必須轉速可信、且連續超差。單筆光柵離群把 EMA 晃過門檻不得進暫態。
+    const bool speed_ok = speed_get_speed_valid();
+    const float err = fabsf(speed_get_now_speed() - keep_now);
+    if (speed_ok && err > (float)PID_ASSIST_ERR_RPM && keep_now > 1.0f)
+    {
+        if (pid_assist_hits < 255)
+        {
+            pid_assist_hits++;
+        }
+        if (pid_assist_hits >= (uint8_t)PID_ASSIST_NEED_HITS)
+        {
+            pid_enter_transient(myPID, now_ms, "error assist", false, false);
+        }
+    }
+    else
+    {
+        pid_assist_hits = 0;
+    }
+}
+
+static void pid_update_transient_exit(QuickPID &myPID, uint32_t now_ms)
+{
+    if (!pid_transient_active)
+    {
+        return;
+    }
+    const float err = fabsf(speed_get_now_speed() - pid_get_keep_rpm());
+    if (speed_get_speed_valid() && err <= (float)PID_TRANSIENT_EXIT_ERR_RPM)
+    {
+        if (pid_transient_exit_hits < 255)
+        {
+            pid_transient_exit_hits++;
+        }
+        if (pid_transient_exit_hits >= (uint8_t)PID_TRANSIENT_EXIT_NEED_HITS)
+        {
+            pid_exit_transient(myPID, "in band");
+        }
+        return;
+    }
+    pid_transient_exit_hits = 0;
+    if ((now_ms - pid_transient_start_ms) >= (uint32_t)PID_TRANSIENT_MAX_MS)
+    {
+        pid_exit_transient(myPID, "timeout");
+    }
+}
+
 // 觸發失控保護：切斷輸出並鎖定故障碼
 static void trip_fault(uint8_t code)
 {
@@ -128,6 +294,7 @@ static void trip_fault(uint8_t code)
     }
     pid_set_autotune_active(false);
     clear_speed_stable();
+    pid_reset_transient_state(nullptr);
     step_pwm = 0;
     pid_output = 0.0f;
     last_final_pwm = 0;
@@ -268,6 +435,26 @@ static bool need_autotune()
 #endif
 }
 
+// 量測起點必須是「開環 hold 後真正可讀的工作點」，不能拿尚未收斂的 EMA。
+// 燒錄若清掉 NVS，舊路徑會把 keep 鎖在爬升中的 ~600RPM，PID 再把馬達往下拉，
+// 且 600<1000 永遠無法 speed_stable。probe 已通過 1150 門檻，優先採用。
+static void lock_keep_from_working_point()
+{
+    const float min_rpm = (float)MEASURE_MIN_RPM;
+    const float now = speed_get_now_speed();
+    const float probe = speed_get_ol_probe_rpm();
+    float keep = now;
+    if (probe >= min_rpm)
+    {
+        keep = fmaxf(keep, probe);
+    }
+    if (keep < min_rpm)
+    {
+        keep = min_rpm;
+    }
+    pid_set_keep_rpm(keep);
+}
+
 // 配置並啟動 sTune(僅第一次進入調參時呼叫)
 static void begin_autotune(sTune &tuner)
 {
@@ -295,19 +482,15 @@ static void begin_autotune(sTune &tuner)
         return;
     }
 
-    // 目標轉速未設定時，鎖存當前轉速作為後續定速設定點
-    // 呼叫端(motor_PID_init)已先等待 PID_TUNE_PRE_SETTLE_MS 讓濾波轉速收斂，
-    // 此處的 now_speed 已是穩定值，不會是剛切換量測方式瞬間的雜訊尖峰
+    // 每次調參都重鎖工作點：NVS 裡的 keep 可能是上次誤鎖的低轉，或舊的 1150 常數。
+    lock_keep_from_working_point();
     const float now_speed_now = speed_get_now_speed();
-    if (pid_get_keep_rpm() <= 1.0f && now_speed_now > 1.0f)
-    {
-        pid_set_keep_rpm(now_speed_now);
-    }
 
     // 依目前實際轉速動態估計 sTune 輸入全幅，而非直接套用飛車保護的絕對上限，
     // 否則會低估製程增益、算出過度激進的 Kp(工作點離飛車上限愈遠，此差異愈明顯)
     const float input_span = fminf(RPM_RUNAWAY_MAX,
-                                    fmaxf(PID_TUNE_INPUT_SPAN_MIN, now_speed_now * 4.0f));
+                                    fmaxf(PID_TUNE_INPUT_SPAN_MIN,
+                                          fmaxf(now_speed_now, pid_get_keep_rpm()) * 4.0f));
     const float estop_rpm = RPM_RUNAWAY_MAX * PID_TUNE_ESTOP_RATIO;
 
     pid_input_bridge = now_speed_now;
@@ -639,6 +822,7 @@ void motor_PID_init(void *pvParameters)
             pid_set_autotune_active(false);
             tune_ready_seen = false;
             clear_speed_stable();
+            pid_reset_transient_state(&myPID);
             pid_output = 0.0f;
             speed_set_ol_pwm_cmd(0);
             last_final_pwm = 0;
@@ -660,12 +844,21 @@ void motor_PID_init(void *pvParameters)
         {
             myPID.SetMode(myPID.Control::manual);
             clear_speed_stable();
+            pid_reset_transient_state(&myPID);
             pid_output = 0.0f;
             last_final_pwm = 0;
             speed_set_ol_pwm_cmd(0);
             speed_set_init_phase(SPEED_PHASE_PID_PAUSED);
             ledcWrite(MOTOR_PWM_PIN, 0);
             continue;
+        }
+        // 暫停已放行：必須立刻離開 PID_PAUSED。否則 speed_sensor 為了避免暫停中
+        // 把 const_speed_ready 搶回 true，會一直把 ready 鎖在 false，開環就卡在
+        // 上次 hold PWM(~200、約 1600RPM)，keep 還在五千轉，speed_stable 永遠等不到。
+        if (speed_get_init_phase() == SPEED_PHASE_PID_PAUSED)
+        {
+            speed_set_init_phase(SPEED_PHASE_STEP_UP);
+            Serial.println("[PID] pause released -> leave PID_PAUSED, resume climb");
         }
 
         // 測速尚未完成：階梯開環起動 + 就緒觀察
@@ -676,6 +869,7 @@ void motor_PID_init(void *pvParameters)
             pid_set_autotune_active(false);
             tune_ready_seen = false;
             clear_speed_stable();
+            pid_reset_transient_state(&myPID);
             open_loop_step_control(millis());
             continue;
         }
@@ -699,6 +893,12 @@ void motor_PID_init(void *pvParameters)
                 {
                     continue; // 等待轉速濾波穩定，維持目前 hold PWM 不動作
                 }
+                // EMA 若還低於可讀門檻，再多等一會；逾時仍進調參，keep 會改用 probe。
+                if (speed_get_now_speed() < (float)MEASURE_MIN_RPM &&
+                    (millis() - tune_ready_since_ms) < ((uint32_t)PID_TUNE_PRE_SETTLE_MS + 3000u))
+                {
+                    continue;
+                }
 
                 if (run_autotune_step(tuner, myPID))
                 {
@@ -711,11 +911,7 @@ void motor_PID_init(void *pvParameters)
                 // 已有 NVS 參數，略過調參
                 pid_set_autotune_done(true);
                 pid_set_autotune_active(false);
-                const float now_speed_now = speed_get_now_speed();
-                if (pid_get_keep_rpm() <= 1.0f && now_speed_now > 1.0f)
-                {
-                    pid_set_keep_rpm(now_speed_now);
-                }
+                lock_keep_from_working_point();
                 Serial.printf("[PID] skip autotune (NVS tuned=1), Kp=%.5f Ki=%.5f Kd=%.5f keep=%.1f\n",
                               (double)pid_get_Kp(), (double)pid_get_Ki(),
                               (double)pid_get_Kd(), (double)pid_get_keep_rpm());
@@ -724,6 +920,15 @@ void motor_PID_init(void *pvParameters)
 
         // ----- PID 定速 -----
         speed_set_init_phase(SPEED_PHASE_PID_RUN);
+
+        // 重測時 keep_rpm 會被清成 0，且 autotune_done 已是 true 不會再走 skip 分支。
+        if (pid_get_keep_rpm() < (float)MEASURE_MIN_RPM)
+        {
+            lock_keep_from_working_point();
+        }
+
+        const uint32_t now_ms = millis();
+        pid_update_transient_enter(myPID, now_ms);
 
         // 先做快照(要在 SetMode 之前，QuickPID 切自動時會用當下的輸入/輸出做無擾接棒)
         pid_input_bridge = speed_get_now_speed();
@@ -752,16 +957,18 @@ void motor_PID_init(void *pvParameters)
 
         // 輸出斜率限制：避免每個控制週期都在 0↔滿載間硬切換，
         // 那樣既是機械衝擊，也會透過馬達動態誘發量測轉速的假性尖峰
+        const float slew_max = pid_transient_active ? (float)PID_TRANSIENT_SLEW_MAX
+                                                    : (float)PID_OUTPUT_SLEW_MAX;
         const float delta_f = final_pwm_f - (float)last_final_pwm;
         bool slew_clamped = false;
-        if (delta_f > (float)PID_OUTPUT_SLEW_MAX)
+        if (delta_f > slew_max)
         {
-            final_pwm_f = (float)last_final_pwm + (float)PID_OUTPUT_SLEW_MAX;
+            final_pwm_f = (float)last_final_pwm + slew_max;
             slew_clamped = true;
         }
-        else if (delta_f < -(float)PID_OUTPUT_SLEW_MAX)
+        else if (delta_f < -slew_max)
         {
-            final_pwm_f = (float)last_final_pwm - (float)PID_OUTPUT_SLEW_MAX;
+            final_pwm_f = (float)last_final_pwm - slew_max;
             slew_clamped = true;
         }
         final_pwm_f = constrain(final_pwm_f, 0.0f, max_pwm_value);
@@ -797,6 +1004,7 @@ void motor_PID_init(void *pvParameters)
 
         // 更新對外穩調旗標(其他模組依 settings.speed_stable 判斷)
         update_speed_stable();
+        pid_update_transient_exit(myPID, now_ms);
     }
 }
 

@@ -1,4 +1,0 @@
-# Keep folder in git; runtime CSV logs are ignored below.
-*
-!.gitignore
-!.gitkeep

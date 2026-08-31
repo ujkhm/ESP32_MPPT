@@ -10,5 +10,6 @@
 // R_th=(Voc-V)/I」，取完立刻斷開，不做熱浸泡。三點取平均得到 R_th、k_e(=Voc/rpm)。
 // 呼叫端(measure_seq)須確保呼叫本函式時已經在 MEAS_RESISTANCE 階段，
 // 且安全電流模組已完成(meas_get_safe_done()==true，提供 I_cont 供接通前預檢)。
-void gen_resistance_reset();               // 重置回本模組最初狀態(全新開始或斷線續測都呼叫)
-bool gen_resistance_step(uint32_t now_ms); // 執行一次狀態機步進；回傳 true=識別已結束(成功或硬故障)
+void gen_resistance_reset();                 // 重置回本模組最初狀態(全新開始)
+void gen_resistance_rewind_current_point();  // 夾子鬆脫續測：重做目前這一點，保留已量到的點
+bool gen_resistance_step(uint32_t now_ms);   // 執行一次狀態機步進；回傳 true=識別已結束(成功或硬故障)

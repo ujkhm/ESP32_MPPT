@@ -39,7 +39,7 @@ bool load_switch_is_connected()
     return meas_get_load_connected();
 }
 
-// ---- 發電機斷線(鱷魚夾脫落)偵測 ----
+// ---- 發電機／負載鱷魚夾脫落偵測 ----
 // 只在本檔案所在任務內使用，不需要放進共享結構。
 static bool link_armed = false;
 static uint32_t link_low_v_since_ms = 0;
@@ -70,7 +70,11 @@ static bool check_generator_link(uint32_t now_ms)
 
     const bool ina_ok = ina_get_online() && ina_get_data_valid();
     const float v = ina_ok ? ina_get_bus_V() : 0.0f;
-    const bool no_output = (!ina_ok) || (v < (float)GEN_LINK_LOST_V_MAX);
+    const float i = ina_ok ? fabsf(ina_get_current_A()) : 0.0f;
+    // 帶載時端子會被 5Ω 拉到很低，不能單看 V<0.15 就當發電機沒輸出。
+    // 真的沒輸出：電壓接近 0 且電流也接近 0（或 INA 離線）。V=1.6 I=0 走 INA mismatch，不走這裡。
+    const bool no_output = (!ina_ok) ||
+                           ((v < (float)GEN_LINK_LOST_V_MAX) && (i < (float)SAFE_I_MIN_VALID_A));
 
     if (!no_output)
     {
@@ -85,7 +89,7 @@ static bool check_generator_link(uint32_t now_ms)
     return (now_ms - link_low_v_since_ms) >= (uint32_t)GEN_LINK_LOST_TIMEOUT_MS;
 }
 
-static void enter_pause(uint8_t phase_to_resume)
+static void enter_pause(uint8_t phase_to_resume, uint8_t cause)
 {
     meas_set_resume_phase(phase_to_resume);
     meas_set_pause_request(true); // 通知 motor_PID：立即把 PWM 歸零、停在 PID_PAUSED
@@ -94,16 +98,32 @@ static void enter_pause(uint8_t phase_to_resume)
         SettingsLockGuard lock(g_meas_mux);
         meas_settings.link_lost = true;
         meas_settings.phase = MEAS_LINK_LOST;
+        meas_settings.pause_cause = cause;
     }
-    Serial.printf("[MEAS] generator link lost during phase=%u -> paused, load opened\n",
-                  (unsigned)phase_to_resume);
+    Serial.printf("[MEAS] pause cause=%u during phase=%u -> paused, load opened, press START to continue\n",
+                  (unsigned)cause, (unsigned)phase_to_resume);
+}
+
+void meas_request_contact_pause(const char *reason)
+{
+    const uint8_t ph = meas_get_phase();
+    Serial.printf("[MEAS] contact pause: %s\n", reason ? reason : "?");
+    enter_pause(ph, PAUSE_CAUSE_CONTACT);
+}
+
+void meas_request_ina_mismatch_pause(const char *reason)
+{
+    const uint8_t ph = meas_get_phase();
+    Serial.printf("[MEAS] INA V/I mismatch pause: %s\n", reason ? reason : "?");
+    enter_pause(ph, PAUSE_CAUSE_INA_MISMATCH);
 }
 
 // 等待恢復後重新爬升至 speed_stable；回傳 true=已恢復可以繼續，false=逾時或途中故障
 static bool wait_for_resume_stable()
 {
+    const uint32_t timeout_ms = speed_wait_timeout_ms(pid_get_keep_rpm());
     const uint32_t wait_start = millis();
-    while ((millis() - wait_start) < (uint32_t)SAFE_SPEED_WAIT_TIMEOUT_MS)
+    while ((millis() - wait_start) < timeout_ms)
     {
         if (speed_get_fault())
         {
@@ -115,6 +135,8 @@ static bool wait_for_resume_stable()
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+    Serial.printf("[MEAS] resume wait speed_stable timeout (%lums, keep=%.0fRPM)\n",
+                  (unsigned long)timeout_ms, (double)pid_get_keep_rpm());
     return false;
 }
 
@@ -126,9 +148,11 @@ static void handle_link_lost_state()
     }
     meas_set_resume_requested(false);
     meas_set_pause_request(false); // 放行 motor_PID：比照真停轉，會自動重新爬升(不需重新調參)
+    meas_set_link_lost(false);     // 與 main.cpp 同步：續測進行中不再對外報斷線
+    const uint8_t saved_cause = meas_get_pause_cause();
     reset_link_monitor();
     const uint8_t target = meas_get_resume_phase();
-    Serial.printf("[MEAS] resume requested -> waiting speed_stable before restarting phase=%u\n",
+    Serial.printf("[MEAS] resume requested -> waiting speed_stable before continuing phase=%u\n",
                   (unsigned)target);
 
     if (!wait_for_resume_stable())
@@ -139,20 +163,51 @@ static void handle_link_lost_state()
         SettingsLockGuard lock(g_meas_mux);
         meas_settings.link_lost = true;
         meas_settings.phase = MEAS_LINK_LOST;
+        meas_settings.pause_cause = saved_cause;
         return;
     }
 
-    // ★決策：斷線恢復後「整段重新開始目前模組」，不延續中斷前的子步驟/部分進度
-    // (已完成的其他模組結果不受影響，例如斷線發生在內阻階段，安全電流的 I_cont 仍然有效)
+    meas_set_pause_cause(PAUSE_CAUSE_NONE);
+
+    // 續測：不重跑已通過的檔／已量到的內阻點，只把「中斷當下那一檔／那一點」從 PREP 再做一次。
     if (target == MEAS_SAFE_CURRENT)
     {
-        safe_current_reset();
+        safe_current_rewind_current_rung();
     }
     else if (target == MEAS_RESISTANCE)
     {
-        gen_resistance_reset();
+        gen_resistance_rewind_current_point();
     }
-    meas_set_phase(target); // MIN_SPEED_HOLD 只是等 speed_stable，不需要額外 reset
+    meas_set_link_lost(false); // 防禦：成功恢復後確保對外狀態一致
+    meas_set_phase(target);    // MIN_SPEED_HOLD 只是等 speed_stable，不需要額外 reset
+    Serial.printf("[MEAS] resume ok -> phase=%u\n", (unsigned)target);
+}
+
+static void begin_new_session()
+{
+    meas_set_restart_requested(false);
+    meas_set_pause_request(false);
+    meas_set_link_lost(false);
+    meas_set_pause_cause(PAUSE_CAUSE_NONE);
+    pid_set_keep_rpm(0.0f);
+    {
+        SettingsLockGuard lock(g_meas_mux);
+        meas_settings.session_active = true;
+        meas_settings.curve_done = false;
+        meas_settings.curve_n_rl = 0.0f;
+        meas_settings.curve_n_knee = 0.0f;
+        meas_settings.curve_n_voc = 0.0f;
+        meas_settings.curve_n_lim = 0.0f;
+        meas_settings.curve_limit_reason = LIMIT_REASON_NONE;
+        meas_settings.curve_point_count = 0;
+        meas_settings.brush_jump_rpm = 0.0f;
+        meas_settings.drive_limit_rpm = 0.0f;
+    }
+    gen_resistance_reset();
+    reset_link_monitor();
+    safe_current_reset();
+    meas_set_phase(MEAS_MIN_SPEED_HOLD);
+    Serial.println("[MEAS] new session -> MIN_SPEED_HOLD");
 }
 
 static void measure_seq_task(void *pvParameters)
@@ -168,6 +223,8 @@ static void measure_seq_task(void *pvParameters)
         meas_settings.link_lost = false;
         meas_settings.pause_request = false;
         meas_settings.resume_requested = false;
+        meas_settings.restart_requested = false;
+        meas_settings.pause_cause = PAUSE_CAUSE_NONE;
     }
     safe_current_reset();
     gen_resistance_reset();
@@ -199,12 +256,18 @@ static void measure_seq_task(void *pvParameters)
 
         // 斷線監測：只在馬達應該轉、且期待有輸出的三個階段檢查；
         // CURVE_CALC/DONE 馬達已經關閉，MEAS_LINK_LOST 本身已在上面處理，都不需要再看。
-        if (phase_now == MEAS_MIN_SPEED_HOLD || phase_now == MEAS_SAFE_CURRENT ||
-            phase_now == MEAS_RESISTANCE)
+        // 進內阻前的 HANDOFF 會故意 PWM=0 滑行／從停轉再爬升，Voc 可能短暫接近 0，
+        // 不可當成夾子鬆脫(否則會把交接搶成暫停、永遠進不了內阻)。
+        const bool skip_link = (phase_now == MEAS_SAFE_CURRENT &&
+                                meas_get_safe_phase() == SAFE_PH_HANDOFF);
+        if (!skip_link &&
+            (phase_now == MEAS_MIN_SPEED_HOLD || phase_now == MEAS_SAFE_CURRENT ||
+             phase_now == MEAS_RESISTANCE))
         {
             if (check_generator_link(now_ms))
             {
-                enter_pause(phase_now);
+                Serial.println("[MEAS] generator output lost (V and I both near zero)");
+                enter_pause(phase_now, PAUSE_CAUSE_CONTACT);
                 continue;
             }
         }
@@ -230,9 +293,9 @@ static void measure_seq_task(void *pvParameters)
         case MEAS_SAFE_CURRENT:
             if (safe_current_step(now_ms))
             {
-                if (speed_get_fault())
+                if (speed_get_fault() || meas_get_link_lost())
                 {
-                    break; // 硬故障收尾：外層下一輪的 fault 檢查會接手，這裡不繼續往下推進
+                    break; // 硬故障或夾子暫停：不推進到內阻
                 }
                 Serial.printf("[MEAS] safe current done: I_cont=%.3fA @ %.0fRPM -> RESISTANCE\n",
                               (double)meas_get_safe_i_cont_A(), (double)meas_get_safe_i_cont_rpm());
@@ -243,14 +306,14 @@ static void measure_seq_task(void *pvParameters)
         case MEAS_RESISTANCE:
             if (gen_resistance_step(now_ms))
             {
-                if (speed_get_fault())
+                if (speed_get_fault() || meas_get_link_lost())
                 {
                     break;
                 }
                 Serial.printf("[MEAS] resistance done: Rth=%.4f ohm ke=%.6f V/RPM -> CURVE_CALC\n",
                               (double)meas_get_res_rth_ohm(), (double)meas_get_res_ke_v_per_rpm());
-                // 物理量測到此全部結束：立即安全關閉馬達(比照暫停機制，PWM 立刻歸零，
-                // 且本序列後續不會再清除 pause_request，等同永久停在這裡直到重開機/取下發電機)
+                // 物理量測到此全部結束：立即安全關閉馬達。曲線算完後會回到 WAIT_START，
+                // 再按 START 可重測，不必重開機。
                 load_switch_set(false);
                 meas_set_pause_request(true);
                 meas_set_phase(MEAS_CURVE_CALC);
@@ -261,12 +324,22 @@ static void measure_seq_task(void *pvParameters)
             curve_calc_run();
             meas_set_curve_done(true);
             meas_set_phase(MEAS_DONE);
-            Serial.println("[MEAS] curve calc done -> DONE, generator can be removed");
+            meas_set_session_active(false);
+            ui_set_state(UI_WAIT_START);
+            Serial.println("[MEAS] curve calc done -> WAIT_START, press START to test again (no reboot)");
             break;
 
         case MEAS_DONE:
             load_switch_set(false); // 冗餘保險：持續確保斷開
-            vTaskDelay(pdMS_TO_TICKS(900));
+            if (meas_get_restart_requested())
+            {
+                begin_new_session();
+                ui_set_state(UI_RUNNING);
+            }
+            else
+            {
+                vTaskDelay(pdMS_TO_TICKS(400));
+            }
             break;
 
         default:

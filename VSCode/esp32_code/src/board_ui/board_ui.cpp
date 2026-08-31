@@ -182,17 +182,25 @@ static void draw_estop()
     u8g2->sendBuffer();
 }
 
-// 發電機斷線暫停：非故障，不需重開機，畫面刻意與 ESTOP 不同，明確告訴使用者下一步該做什麼
+// 夾子／量測線鬆脫暫停：非故障，不需重開機，畫面刻意與 ESTOP 不同
 static void draw_link_lost()
 {
     char line[32];
     u8g2->clearBuffer();
     u8g2->setFont(u8g2_font_6x12_tf);
-    u8g2->drawStr(0, 12, "GEN DISCONNECTED");
-    u8g2->drawStr(0, 26, "Check leads (clips)");
+    if (meas_get_pause_cause() == PAUSE_CAUSE_INA_MISMATCH)
+    {
+        u8g2->drawStr(0, 12, "INA I/V BAD");
+        u8g2->drawStr(0, 26, "Sample discarded");
+    }
+    else
+    {
+        u8g2->drawStr(0, 12, "CLIPS LOOSE");
+        u8g2->drawStr(0, 26, "Check gen/load clips");
+    }
     snprintf(line, sizeof(line), "was: %s", meas_phase_label(meas_get_resume_phase()));
     u8g2->drawStr(0, 40, line);
-    u8g2->drawStr(0, 56, "Press START to retry");
+    u8g2->drawStr(0, 56, "START continues");
     u8g2->sendBuffer();
 }
 

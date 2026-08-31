@@ -52,6 +52,15 @@ void gen_resistance_reset()
     }
 }
 
+void gen_resistance_rewind_current_point()
+{
+    load_switch_set(false);
+    goto_phase(RES_PH_PREP);
+    Serial.printf("[RES] rewind current point PREP idx=%u valid_points=%u\n",
+                  (unsigned)meas_get_res_point_index(),
+                  (unsigned)meas_get_res_valid_points());
+}
+
 // 整機安全鎖定：比照安全電流模組的 fail_hard()，效果等同 ESTOP，需重開機
 static void fail_hard(const char *reason)
 {
@@ -59,6 +68,22 @@ static void fail_hard(const char *reason)
     Serial.printf("[RES] HARD FAIL: %s\n", reason);
     speed_trigger_fault(FAULT_MEASURE_SAFETY);
     ledcWrite(MOTOR_PWM_PIN, 0);
+}
+
+static bool fail_contact(const char *reason)
+{
+    load_switch_set(false);
+    Serial.printf("[RES] contact pause: %s\n", reason);
+    meas_request_contact_pause(reason);
+    return false;
+}
+
+static bool fail_ina_mismatch(const char *reason)
+{
+    load_switch_set(false);
+    Serial.printf("[RES] INA V/I mismatch pause: %s\n", reason);
+    meas_request_ina_mismatch_pause(reason);
+    return false;
 }
 
 static void finish_averaging()
@@ -134,8 +159,7 @@ bool gen_resistance_step(uint32_t now_ms)
         }
         if (!(ina_get_online() && ina_get_data_valid()))
         {
-            fail_hard("INA offline during open-circuit sample");
-            return true;
+            return fail_contact("INA offline during open-circuit sample");
         }
         {
             const float oc_a = fabsf(ina_get_current_A());
@@ -197,8 +221,7 @@ bool gen_resistance_step(uint32_t now_ms)
         {
             if (elapsed > speed_wait_timeout_ms(meas_get_res_target_rpm()))
             {
-                fail_hard("speed did not restabilize after connecting load");
-                return true;
+                return fail_contact("speed did not restabilize after connecting load");
             }
             return false;
         }
@@ -229,17 +252,29 @@ bool gen_resistance_step(uint32_t now_ms)
                 // 大很多，補償量也大很多——這正是不補償就會讓 R_th 系統性算錯的地方。
                 v = ss54_compensate_voltage_V(ina_get_bus_V(), i);
             }
-            load_switch_set(false); // 取完立刻斷開，不做熱浸泡(內阻要快，避免量到熱態)
             if (!ok)
             {
-                fail_hard("INA offline during load sample");
-                return true;
+                return fail_contact("INA offline during load sample");
             }
-            if (i < (float)RES_MIN_VALID_A)
+            const float voc = meas_get_res_oc_voltage_V();
+            const bool looks_open = (i < (float)RES_MIN_VALID_A) && (voc > 1.0f) &&
+                                    (ina_get_bus_V() >= voc * (float)SAFE_I_OPEN_V_RATIO);
+            if (looks_open)
             {
-                fail_hard("load current too small during sample (load not connected?)");
-                return true;
+                return fail_contact("load current too small during sample (load not connected?)");
             }
+            if (!ina_get_current_plausible() || ina_loaded_vi_mismatch(ina_get_bus_V(), i) ||
+                i < (float)RES_MIN_VALID_A)
+            {
+                if (elapsed >= (uint32_t)(RES_LOAD_SAMPLE_MS + INA_I_INCONSISTENT_PAUSE_MS))
+                {
+                    return fail_ina_mismatch("V still loaded but I disagrees with V/R — Rth not recorded");
+                }
+                Serial.printf("[RES] ignore I glitch I=%.3f V=%.2f Voc=%.2f, retry sample\n",
+                              (double)i, (double)v, (double)voc);
+                return false;
+            }
+            load_switch_set(false); // 取完立刻斷開，不做熱浸泡(內阻要快，避免量到熱態)
             meas_set_res_load_V(v);
             meas_set_res_load_A(i);
         }

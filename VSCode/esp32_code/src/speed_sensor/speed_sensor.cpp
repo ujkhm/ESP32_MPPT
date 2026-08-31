@@ -155,6 +155,11 @@ static void try_latch_init_probe(float rpm_same, bool got_new_same_slot, uint32_
     settings.speed_valid = true;
   }
   last_valid_rpm = rpm_same;
+  // probe 已通過可讀門檻：立刻把 EMA 對齊這筆同位置整圈，否則 LEARNING 期間
+  // 離群過濾會拿爬升中的低 EMA 把真實 ~1150+ RPM 當雜訊丢掉，keep_rpm 就被鎖在一半。
+  speed_filter_ema = rpm_same;
+  speed_filter_inited = true;
+  speed_outlier_reject_streak = 0;
   probe_armed = false;
 }
 
@@ -374,7 +379,10 @@ void speed_sensor_init(void *pvParameters)
           // 增益極高(約每 1 count 對應 10+ RPM)，這種被放大的雜訊經比例項直接回饋，正是
           // 先前 PID_RUN 階段轉速劇烈震盪、久久無法收斂的根本原因之一，故不採用。
           float rpm_for_filter = rpm_same;
-          if (speed_filter_inited)
+          const uint8_t phase_now = speed_get_init_phase();
+          // 離群拒絕只在閉環定速做：開環爬升／就緒觀察／sTune 階躍時轉速本來就會一次跳數百 RPM，
+          // 若這時把真值當雜訊丢掉，EMA 會卡在半途，keep_rpm 也會跟著鎖錯。
+          if (speed_filter_inited && phase_now == SPEED_PHASE_PID_RUN)
           {
             const float delta = fabsf(rpm_same - speed_filter_ema);
             const float rel_limit = fmaxf(speed_filter_ema, 1.0f) * (float)SPEED_OUTLIER_MAX_RATIO;
@@ -384,13 +392,9 @@ void speed_sensor_init(void *pvParameters)
               if (speed_outlier_reject_streak < SPEED_OUTLIER_REJECT_MAX)
               {
                 speed_outlier_reject_streak++;
-                const uint8_t phase_now = speed_get_init_phase();
-                if (phase_now == SPEED_PHASE_PID_RUN)
-                {
-                  Serial.printf("[EVT] speed outlier reject raw=%.1f ema=%.1f d=%.1f streak=%u\n",
-                                (double)rpm_same, (double)speed_filter_ema, (double)delta,
-                                (unsigned)speed_outlier_reject_streak);
-                }
+                Serial.printf("[EVT] speed outlier reject raw=%.1f ema=%.1f d=%.1f streak=%u\n",
+                              (double)rpm_same, (double)speed_filter_ema, (double)delta,
+                              (unsigned)speed_outlier_reject_streak);
                 rpm_for_filter = speed_filter_ema; // 本筆視為雜訊，維持上一筆 EMA
               }
               else
@@ -428,7 +432,6 @@ void speed_sensor_init(void *pvParameters)
           // 以本機台 process gain(~10RPM/count)搭配 15ms 週期估計，正常動態下單週期變化
           // 很難超過此值，故此閾值僅用於標記「異常大」事件，不影響任何控制邏輯。
           // 必須用「更新前」的 last_valid_rpm 做比較基準，且要在 rpm_out 寫回前判斷。
-          const uint8_t phase_now = speed_get_init_phase();
           if (phase_now == SPEED_PHASE_PID_RUN && last_valid_rpm > 1.0f)
           {
             const float jump = fabsf(rpm_out - last_valid_rpm);

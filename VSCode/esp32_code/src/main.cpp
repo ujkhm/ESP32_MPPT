@@ -113,13 +113,16 @@ static void start_motor_control()
   Serial.println("[MAIN] START → motor_PID + speed_sensor + measure_seq started");
 }
 
-// 發電機斷線暫停中再按 START：請 measure_seq 嘗試恢復目前模組(整段重新開始，見 measure_seq.cpp)。
+// 發電機斷線暫停中再按 START：請 measure_seq 從中斷的那一檔／那一點續測（不從頭重跑目前模組）。
 // 只負責「轉達使用者意圖」與樂觀更新 UI，實際的恢復時序(等 speed_stable 等)由 measure_seq 自行把關。
 static void resume_after_link_loss()
 {
   meas_set_resume_requested(true);
+  // 使用者已重按 START 確認要續測：先清斷線旗標，避免 loop() 立刻把 UI 打回 LINK_LOST
+  // (否則 OLED/上位機會一直顯示「斷線」，即使馬達已開始重新爬升)
+  meas_set_link_lost(false);
   ui_set_state(UI_RUNNING);
-  Serial.println("[MAIN] START → resume requested after generator link loss");
+  Serial.println("[MAIN] START → resume requested after clip/lead pause");
 }
 
 // 去彈跳後偵測按下邊緣；ISR 旗標加速喚醒，仍以穩定電平為準
@@ -163,10 +166,25 @@ static void handle_start_button(uint32_t now_ms)
 
   if (cur_state == UI_WAIT_START)
   {
-    start_motor_control();
+    if (!ui_get_motor_started())
+    {
+      start_motor_control();
+    }
+    else
+    {
+      meas_set_restart_requested(true);
+      ui_set_state(UI_RUNNING);
+      Serial.println("[MAIN] START → new measurement session (no reboot)");
+    }
   }
   else if (cur_state == UI_RUNNING)
   {
+    // 續測爬升中 UI 已樂觀切成 RUNNING，phase 仍是 LINK_LOST：再按 START 不當急停。
+    if (meas_get_phase() == MEAS_LINK_LOST)
+    {
+      Serial.println("[MAIN] START ignored during resume climb (not ESTOP)");
+      return;
+    }
     trigger_estop();
   }
   else if (cur_state == UI_LINK_LOST)
@@ -370,7 +388,7 @@ static void serial_print_debug_status()
       "probe_req=%d probe_rdy=%d probe_rpm=%.1f "
       "settle=%u/%u ready=%d ol_hold_ok=%d speed_stable=%d fault=%d(%s) edges=%lu "
       "keep=%.1f tune=%d/%d tunedNVS=%d Kp=%.4f Ki=%.4f Kd=%.4f "
-      "V=%.2f I=%.3f P=%.2f ina=%d/%d n=%lu\n",
+      "V=%.2f I=%.3f P=%.2f ina=%d/%d p=%d n=%lu\n",
       (unsigned long)millis(),
       ui_state_name(ui_get_state()),
       digitalRead(START_PIN),
@@ -403,6 +421,7 @@ static void serial_print_debug_status()
       (double)ina_get_power_W(),
       (int)ina_get_online(),
       (int)ina_get_data_valid(),
+      (int)ina_get_current_plausible(),
       (unsigned long)ina_get_sample_count());
 }
 
@@ -429,12 +448,17 @@ void setup()
                 (double)(PID_TUNE_STEP_RATIO * 100.0f),
                 (int)PID_TUNE_SERIAL_VERBOSE);
   Serial.printf("[BOOT] tune_estop=%.0f pre_settle=%ums gain_scale=%.2f "
-                "slew_max=%u/cycle speed_filter_alpha=%.2f\n",
+                "slew_max=%u/cycle trans_gain=%.2f trans_slew=%u trans_max=%ums "
+                "speed_filter_alpha=%.2f load_R=%.1fΩ\n",
                 (double)(RPM_RUNAWAY_MAX * PID_TUNE_ESTOP_RATIO),
                 (unsigned)PID_TUNE_PRE_SETTLE_MS,
                 (double)PID_TUNE_GAIN_SCALE,
                 (unsigned)PID_OUTPUT_SLEW_MAX,
-                (double)SPEED_FILTER_ALPHA);
+                (double)PID_TRANSIENT_GAIN_SCALE,
+                (unsigned)PID_TRANSIENT_SLEW_MAX,
+                (unsigned)PID_TRANSIENT_MAX_MS,
+                (double)SPEED_FILTER_ALPHA,
+                (double)LOAD_TEST_RESISTOR_OHM);
   Serial.printf("[BOOT] I2C OLED=soft INA=soft@%uHz | INA addr=0x%02X Rshunt=%.3fΩ Imax=%.2fA\n",
                 (unsigned)I2C_INA_FREQ_HZ,
                 (unsigned)INA232_I2C_ADDR,
@@ -465,10 +489,15 @@ void loop()
     ui_set_state(UI_ESTOP);
   }
 
-  // 量測序列偵測到發電機斷線 → UI 進入(非故障的)暫停畫面，重按 START 才會續測
-  if ((ui_get_state() == UI_RUNNING) && meas_get_link_lost())
+  // 量測序列偵測到夾子／量測線鬆脫且馬達已暫停 → UI 進入(非故障的)暫停畫面。
+  // 必須同時看 pause_request：續測恢復期間 pause_request 已放行、link_lost 已清除，
+  // 不應再把 UI 打回 LINK_LOST(否則 OLED 無反應、上位機異常彈窗不會消失)。
+  if (meas_get_link_lost() && meas_get_pause_request())
   {
-    ui_set_state(UI_LINK_LOST);
+    if (ui_get_state() == UI_RUNNING)
+    {
+      ui_set_state(UI_LINK_LOST);
+    }
   }
 
   serial_print_events();
